@@ -1,0 +1,7 @@
+# The build's output and ESP-IDF's generated files
+out/
+sdkconfig
+sdkconfig.old
+managed_components/
+# Wi-Fi name, password and token (main/secrets.h.example says what goes in)
+main/secrets.h
