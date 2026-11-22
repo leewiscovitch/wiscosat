@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Build the PSK spike: SPIKE_SECRETS_DIR=<folder with spike_secrets.h> ./build [<output folder>]
+# The header (the Wi-Fi and the test key) and the output, which holds them too, belong in /dev/shm.
+set -euo pipefail
+cd "$(dirname "$(readlink -f "$0")")"
+die() { echo "build: $1" >&2; exit "${2:-1}"; }
+idf_path="${IDF_PATH:-/opt/esp-idf}"
+[ -f "$idf_path/export.sh" ] || die "no ESP-IDF in $idf_path (set IDF_PATH)" 2
+[ -f "${SPIKE_SECRETS_DIR:-main}/spike_secrets.h" ] || die "no spike_secrets.h (set SPIKE_SECRETS_DIR)" 2
+out="${1:-out}"
+# shellcheck disable=SC1091
+. "$idf_path/export.sh" > /dev/null || die "ESP-IDF's export.sh failed" 2
+idf.py -B "$out" -D SDKCONFIG="$out/sdkconfig" build || die "idf.py build failed"
+echo "build: $out/psk_spike.bin, flash with: cd $out && esptool --chip esp32s3 write_flash @flash_args"
