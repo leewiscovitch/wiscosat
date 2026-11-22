@@ -12,6 +12,7 @@ die() { echo "test: $1" >&2; exit "${2:-1}"; }
 
 out=out/test
 mkdir -p "$out"
+# shellcheck disable=SC2054 # the comma is part of one flag
 san=(-fsanitize=address,undefined -fno-sanitize-recover=undefined)
 # cJSON is not ours: built without our warnings
 cc -std=c11 -O1 -g "${san[@]}" -c "$cjson/cJSON.c" -o "$out/cJSON.o" || die "cJSON did not build"
