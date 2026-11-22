@@ -13,7 +13,8 @@ ESP-IDF. Public.
   `git grep -n -i 'wisco\|192\.168\|10\.42'`: only the repo's own name (and its owner's GitHub name) may match
 - **No secret in the repo, in a log or on the serial port.** Typed text, keys and passwords are never logged
 - **Every version pinned:** ESP-IDF (v5.5.6, `README.md`), the managed components (`dependencies.lock`, committed)
-- **`./build` must pass before every commit** (and `./test`, once it exists: the parts that run on Linux)
+- **`./test` and `./build` must pass before every commit** (`./test`: the pure parts, on Linux). A new pure part
+  (no ESP-IDF header) gets its tests in `tests/` first
 - **The flash layout fits 8 MB** (the smallest board in use), whatever the board has
 - C in ESP-IDF's style: four spaces, `snake_case`, `static` for everything a file keeps to itself. Scripts in bash,
   `set -euo pipefail`, one clear line and a non-zero exit on failure
