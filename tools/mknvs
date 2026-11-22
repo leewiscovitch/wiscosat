@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Make a unit's NVS image from a CSV on standard input: tools/mknvs --size 0x6000 <out.bin>
+# The CSV is ESP-IDF's (nvs_partition_gen.py): a header line, the namespace, then one entry per line:
+#
+#   key,type,encoding,value
+#   sat,namespace,,
+#   name,data,string,unit-1
+#   wifi_ssid,data,string,example
+#   wifi_pass,data,string,<the Wi-Fi password>
+#   ip,data,string,192.0.2.61
+#   mask,data,string,255.255.255.0
+#   gw,data,string,192.0.2.1
+#   key,data,hex2bin,<64 hex characters: the unit's key>
+#
+# The CSV holds secrets: it comes on standard input (never a file of its own), and <out.bin> should be on a tmpfs
+# (/dev/shm), made 0600 here. The size is the nvs partition's (partitions.csv). ESP-IDF from $IDF_PATH.
+# Exit 0 made, 1 the generator failed, 2 wrong arguments or no ESP-IDF.
+set -euo pipefail
+
+die() { echo "mknvs: $1" >&2; exit "${2:-1}"; }
+[ $# -eq 3 ] && [ "$1" = --size ] || die "usage: mknvs --size 0x6000 <out.bin> (the CSV on standard input)" 2
+size=$2 out=$3
+idf_path="${IDF_PATH:-/opt/esp-idf}"
+[ -f "$idf_path/export.sh" ] || die "no ESP-IDF in $idf_path (set IDF_PATH)" 2
+# the generator is a package of ESP-IDF's Python env; export.sh puts that env first on the PATH
+# shellcheck disable=SC1091
+. "$idf_path/export.sh" > /dev/null || die "ESP-IDF's export.sh failed" 2
+
+umask 077
+csv=$(cat)
+# the generator reads a file name; a pipe keeps the CSV off every disk
+python -m esp_idf_nvs_partition_gen generate <(printf '%s\n' "$csv") "$out" "$size" > /dev/null || die "nvs_partition_gen.py failed"
+chmod 600 "$out"
+echo "mknvs: $out, $(stat -c %s "$out") bytes"

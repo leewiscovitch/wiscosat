@@ -9,7 +9,7 @@ ESP-IDF. Public.
 
 - **No value of any one lab.** No Wi-Fi name, address, key, host name or unit name of a real place as a default,
   in an example or in a comment. Examples use `192.0.2.x` and `unit-1`. A unit's own values reach it from outside
-  the repo (today `main/secrets.h`, never committed; later its NVS). Before every push:
+  the repo, in its NVS (`README.md` "A unit's settings"). Before every push:
   `git grep -n -i 'wisco\|192\.168\|10\.42'`: only the repo's own name (and its owner's GitHub name) may match
 - **No secret in the repo, in a log or on the serial port.** Typed text, keys and passwords are never logged
 - **Every version pinned:** ESP-IDF (v5.5.6, `README.md`), the managed components (`dependencies.lock`, committed)

@@ -1,7 +1,8 @@
-// The wiring: start-up, the event list, the armed key's task, the commands, the channel and the Wi-Fi.
+// The wiring: start-up, the event list, the armed key's task, the commands and status.
 // The parts: keys.c (names to reports), armed.c (the armed key's schedule), proto.c (the lines), seedrules.c
-// (what a seed may hold), usb_kbd.c (the USB device, the keyboard), usb_msc.c (the seed drive).
-// Wi-Fi: TCP port 5577, one JSON object per line in (up to 16 KB), one JSON line out.
+// (what a seed may hold), lockout.c (the channel's lockout), settings.c (a unit's settings from NVS), usb_kbd.c
+// (the USB device, the keyboard), usb_msc.c (the seed drive), wifi.c (the network), channel.c (TLS-PSK, the lines).
+// An unenrolled board (no settings in NVS) is a keyboard and a seed drive with no network.
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -9,21 +10,18 @@
 #include "freertos/semphr.h"
 #include "esp_system.h"
 #include "esp_timer.h"
-#include "esp_event.h"
-#include "esp_netif.h"
-#include "esp_wifi.h"
+#include "esp_app_desc.h"
+#include "esp_ota_ops.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "driver/gpio.h"
-#include "lwip/sockets.h"
 #include "cJSON.h"
 #include "armed.h"
 #include "keys.h"
 #include "proto.h"
 #include "sat.h"
-#include "secrets.h"
+#include "settings.h"
 
-#define PORT 5577
 #define PIN_POWER_ON 46 // T-Embed: keeps the board's peripherals rail on
 
 // ---------- events ----------
@@ -51,8 +49,9 @@ void ev(const char *what)
     taskEXIT_CRITICAL(&ev_mux);
 }
 
-static volatile uint32_t wifi_ip_ms, first_cmd_ms;
-static char ip_str[16] = "";
+static volatile uint32_t first_cmd_ms;
+static settings_t settings;
+static bool enrolled;
 
 // ---------- the armed key ----------
 // With "persist" it is kept in NVS so it survives the unit's own power cut (a cold start of the target), and
@@ -224,11 +223,16 @@ static cJSON *state_json(void)
 {
     cJSON *s = cJSON_CreateObject();
     kbd_state(s);
+    cJSON_AddStringToObject(s, "name", settings.name);
+    cJSON_AddStringToObject(s, "version", esp_app_get_description()->version);
+    const esp_partition_t *slot = esp_ota_get_running_partition();
+    cJSON_AddStringToObject(s, "slot", slot ? slot->label : "");
     cJSON_AddNumberToObject(s, "uptime_ms", now_ms());
-    cJSON_AddNumberToObject(s, "wifi_ip_ms", wifi_ip_ms);
     cJSON_AddNumberToObject(s, "first_command_ms", first_cmd_ms);
     cJSON_AddStringToObject(s, "reset_reason", reset_reason());
-    cJSON_AddStringToObject(s, "ip", ip_str);
+    cJSON_AddStringToObject(s, "ip", settings.ip_str);
+    wifi_state(s);
+    channel_state(s);
     arm_state(s);
     seed_state(s);
     cJSON *a = cJSON_AddArrayToObject(s, "events");
@@ -288,91 +292,18 @@ static const char *run(const cmd_t *c, char *msg, size_t size)
     return "unknown command";
 }
 
-static char *handle_line(const char *line, size_t len)
+char *app_handle_line(const char *line, size_t len)
 {
     cmd_t c;
     const char *err = NULL;
     char msg[160];
     if (!first_cmd_ms) first_cmd_ms = now_ms();
     if (proto_parse(line, len, &c, &err)) return proto_answer(err, NULL);
-    // the trials' shared token guards the channel until it is TLS with a key per unit
-    if (!c.token || strcmp(c.token, TOKEN)) err = "bad token";
-    else {
-        const host_t h = {.configured = usb_configured(), .suspended = usb_suspended(), .firing = firing()};
-        err = proto_check(&c, &h);
-    }
+    const host_t h = {.configured = usb_configured(), .suspended = usb_suspended(), .firing = firing()};
+    err = proto_check(&c, &h);
     if (!err) err = run(&c, msg, sizeof(msg));
     proto_free(&c);
     return proto_answer(err, err ? NULL : state_json());
-}
-
-// ---------- the channel ----------
-#define BUF_LEN (PROTO_LINE_MAX + 2) // a whole line, its newline and a NUL
-
-static void conn_task(void *arg)
-{
-    int fd = (int)(intptr_t)arg, len = 0;
-    char *buf = malloc(BUF_LEN);
-    struct timeval tv = {.tv_sec = 60};
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    int one = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-    while (buf) {
-        int n = recv(fd, buf + len, BUF_LEN - 1 - len, 0);
-        if (n <= 0) break;
-        len += n;
-        buf[len] = 0;
-        char *nl;
-        while ((nl = memchr(buf, '\n', len))) {
-            char *out = handle_line(buf, nl - buf);
-            if (out) {
-                send(fd, out, strlen(out), 0);
-                send(fd, "\n", 1, 0);
-                free(out);
-            }
-            len -= (nl + 1 - buf);
-            memmove(buf, nl + 1, len + 1);
-        }
-        if (len >= BUF_LEN - 1) { // no newline in more than a line's bytes: say so instead of a silent close
-            send(fd, PROTO_LINE_TOO_LONG "\n", sizeof(PROTO_LINE_TOO_LONG "\n") - 1, 0);
-            break;
-        }
-    }
-    free(buf);
-    close(fd);
-    vTaskDelete(NULL);
-}
-
-static void server_task(void *arg)
-{
-    int s = socket(AF_INET, SOCK_STREAM, 0), one = 1;
-    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    struct sockaddr_in a = {.sin_family = AF_INET, .sin_port = htons(PORT), .sin_addr.s_addr = htonl(INADDR_ANY)};
-    bind(s, (struct sockaddr *)&a, sizeof(a));
-    listen(s, 4);
-    for (;;) {
-        int fd = accept(s, NULL, NULL);
-        if (fd < 0) {
-            vTaskDelay(pdMS_TO_TICKS(100));
-            continue;
-        }
-        if (xTaskCreate(conn_task, "conn", 8192, (void *)(intptr_t)fd, 5, NULL) != pdPASS) close(fd);
-    }
-}
-
-// ---------- Wi-Fi ----------
-static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
-{
-    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) esp_wifi_connect();
-    else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        ev("wifi disconnected");
-        esp_wifi_connect();
-    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *e = data;
-        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&e->ip_info.ip));
-        if (!wifi_ip_ms) wifi_ip_ms = now_ms();
-        ev("wifi got ip");
-    }
 }
 
 void app_main(void)
@@ -395,19 +326,12 @@ void app_main(void)
     // USB next: being a keyboard must not wait for Wi-Fi
     usb_start();
 
-    esp_netif_init();
-    esp_event_loop_create_default();
-    esp_netif_create_default_wifi_sta();
-    wifi_init_config_t wic = WIFI_INIT_CONFIG_DEFAULT();
-    esp_wifi_init(&wic);
-    esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_event, NULL, NULL);
-    esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_event, NULL, NULL);
-    wifi_config_t wc = {0};
-    strlcpy((char *)wc.sta.ssid, WIFI_SSID, sizeof(wc.sta.ssid));
-    strlcpy((char *)wc.sta.password, WIFI_PASS, sizeof(wc.sta.password));
-    esp_wifi_set_mode(WIFI_MODE_STA);
-    esp_wifi_set_config(WIFI_IF_STA, &wc);
-    esp_wifi_start();
-    esp_wifi_set_ps(WIFI_PS_NONE);
-    xTaskCreate(server_task, "server", 4096, NULL, 5, NULL);
+    // the network last, and only for an enrolled unit; nothing below waits for it
+    enrolled = settings_load(&settings);
+    if (!enrolled) {
+        ev("unenrolled: no network");
+        return;
+    }
+    wifi_start(&settings);
+    channel_start(&settings);
 }

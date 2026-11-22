@@ -32,7 +32,6 @@ typedef enum { WHEN_NOW, WHEN_CONFIGURED } when_t;
 
 typedef struct {
     cmd_kind_t kind;
-    const char *token; // the trials' shared token, if the line has one; proto does not judge it
     struct {           // key, press, release
         const char *name; // NULL only for a release of everything
         uint8_t report[8];

@@ -3,18 +3,20 @@
 # ESP-IDF from $IDF_PATH (default /opt/esp-idf). Writes out/wiscosat.bin (the app), out/flash_args (what goes
 # where at a first flash: esptool.py write_flash @flash_args, run in out/) and out/wiscosat.sha256.
 # The output goes to out/ (idf.py -B out): a folder build/ cannot sit beside this script.
-# Exit 0 built, 1 the build failed, 2 no ESP-IDF or no main/secrets.h.
+# Exit 0 built, 1 the build failed, 2 no ESP-IDF. Nothing of a unit is built in: its settings are in its NVS.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 
 idf_path="${IDF_PATH:-/opt/esp-idf}"
 die() { echo "build: $1" >&2; exit "${2:-1}"; }
 [ -f "$idf_path/export.sh" ] || die "no ESP-IDF in $idf_path (set IDF_PATH)" 2
-[ -f main/secrets.h ] || die "main/secrets.h missing: copy main/secrets.h.example and fill it in" 2
 
 # export.sh puts idf.py and the compilers on the PATH; it is chatty, so only its errors are shown
 # shellcheck disable=SC1091
 . "$idf_path/export.sh" > /dev/null || die "ESP-IDF's export.sh failed" 2
+
+# sdkconfig.defaults wins: a sdkconfig older than it is made again (idf.py would keep its old values)
+[ sdkconfig -nt sdkconfig.defaults ] || rm -f sdkconfig
 
 idf.py -B out build || die "idf.py build failed"
 (cd out && sha256sum wiscosat.bin > wiscosat.sha256)

@@ -43,7 +43,7 @@ static void test_lines(void)
     CHECK_HAS(parse_free("{\"cmd\":\"bootloader\"}"), "unknown command");
     CHECK_HAS(parse_free("{\"cmd\":7}"), "no cmd");
 
-    // the trials' token: accepted, the field ignored
+    // the trials' token: the channel's key replaced it; an old client's field is ignored
     CHECK(parse("{\"cmd\":\"status\",\"token\":\"anything\"}", &c) == NULL);
     CHECK(c.kind == CMD_STATUS);
     proto_free(&c);

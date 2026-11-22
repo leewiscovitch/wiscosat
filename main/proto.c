@@ -179,7 +179,6 @@ int proto_parse(const char *line, size_t len, cmd_t *out, const char **err)
             }
     }
     if (!e) {
-        out->token = str(req, "token");
         switch (out->kind) {
         case CMD_KEY:
         case CMD_PRESS:

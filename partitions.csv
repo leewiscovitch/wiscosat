@@ -1,5 +1,8 @@
 # Name,   Type, SubType, Offset,  Size
+# Fits 8 MB: NVS (the unit's settings, the armed key), two app slots for updates, the 1 MB seed
 nvs,      data, nvs,     0x9000,  0x6000
-phy_init, data, phy,     0xf000,  0x1000
-factory,  app,  factory, 0x10000, 2M
+otadata,  data, ota,     0xf000,  0x2000
+phy_init, data, phy,     0x11000, 0x1000
+ota_0,    app,  ota_0,   0x20000, 2M
+ota_1,    app,  ota_1,   ,        2M
 seed,     data, fat,     ,        1M

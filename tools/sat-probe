@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""A bench probe for a unit's channel: sends one JSON line (or several connections of it) and prints what comes back.
+
+    SAT_KEY_FILE=<file with 64 hex characters> tools/sat-probe <address> [--name unit-1] [--line '{"cmd":"status"}']
+                                                   [--count N] [--wrong-key | --plain]
+
+TLS 1.3 with the unit's pre-shared key (identity: the unit's name), as the unit takes it. --wrong-key flips every
+bit of the key's first byte (the handshake must fail); --plain sends the line with no TLS, as the trials' clients
+did (the unit must close it). The key is read from a file, never an argument (it would show in ps). Prints one JSON
+line per connection: the unit's answer with the client's handshake time, or the error. Exit 0 when every
+connection got an answer line, 1 otherwise. Standard library only; Python 3.13 or later (the PSK callback).
+The real client is the lab's own; this one is for building and checking the firmware.
+"""
+import argparse
+import json
+import os
+import socket
+import ssl
+import sys
+import time
+
+
+def context(key, name):
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    ctx.minimum_version = ctx.maximum_version = ssl.TLSVersion.TLSv1_3
+    ctx.set_psk_client_callback(lambda hint: (name, key))
+    return ctx
+
+
+def read_line(sock):
+    buf = b""
+    while b"\n" not in buf:
+        chunk = sock.recv(65536)
+        if not chunk:
+            break
+        buf += chunk
+    return buf
+
+
+def one(address, port, ctx, line):
+    t0 = time.monotonic()
+    with socket.create_connection((address, port), timeout=10) as raw:
+        if ctx is None:
+            raw.sendall(line.encode() + b"\n")
+            buf = read_line(raw)
+            return {"plain": True, "closed": not buf, "got_bytes": len(buf)}
+        with ctx.wrap_socket(raw) as tls:
+            t1 = time.monotonic()
+            tls.sendall(line.encode() + b"\n")
+            buf = read_line(tls)
+            if not buf:
+                raise ConnectionError("closed with no answer")
+            answer = json.loads(buf.decode())
+            answer["client_handshake_ms"] = round((t1 - t0) * 1000, 1)
+            answer["client_cipher"] = tls.cipher()[0]
+            return answer
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("address")
+    p.add_argument("--port", type=int, default=5577)
+    p.add_argument("--name", default="unit-1")
+    p.add_argument("--line", default='{"cmd":"status"}')
+    p.add_argument("--count", type=int, default=1)
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--wrong-key", action="store_true")
+    g.add_argument("--plain", action="store_true")
+    a = p.parse_args()
+    ctx = None
+    if not a.plain:
+        with open(os.environ["SAT_KEY_FILE"]) as f:
+            key = bytes.fromhex(f.read().strip())
+        if a.wrong_key:
+            key = bytes([key[0] ^ 0xFF]) + key[1:]
+        ctx = context(key, a.name)
+    ok = True
+    for _ in range(a.count):
+        try:
+            ans = one(a.address, a.port, ctx, a.line)
+            ok &= not ans.get("plain")
+            print(json.dumps(ans))
+        except Exception as e:  # every failure is a line, for the record
+            ok = False
+            print(json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"}))
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
