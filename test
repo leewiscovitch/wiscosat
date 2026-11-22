@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and run the Linux tests of the firmware's pure parts (keys, armed, proto, seedrules): ./test
+# Build and run the Linux tests of the firmware's pure parts (keys, armed, proto, seedrules, lockout, settings): ./test
 # Uses the host's cc and cJSON from ESP-IDF's tree ($IDF_PATH, default /opt/esp-idf); no ESP-IDF build, no board.
 # Built with AddressSanitizer and UBSan, so a memory or arithmetic fault fails the run too.
 # Exit 0 all passed, 1 a check failed or the tests did not build, 2 no cJSON.
@@ -17,6 +17,6 @@ san=(-fsanitize=address,undefined -fno-sanitize-recover=undefined)
 # cJSON is not ours: built without our warnings
 cc -std=c11 -O1 -g "${san[@]}" -c "$cjson/cJSON.c" -o "$out/cJSON.o" || die "cJSON did not build"
 cc -std=c11 -O1 -g -Wall -Wextra -Werror "${san[@]}" -I main -I "$cjson" \
-    tests/*.c main/keys.c main/armed.c main/proto.c main/seedrules.c "$out/cJSON.o" -o "$out/tests" ||
+    tests/*.c main/keys.c main/armed.c main/proto.c main/seedrules.c main/lockout.c main/settings.c "$out/cJSON.o" -o "$out/tests" ||
     die "the tests did not build"
 "$out/tests" || die "a check failed"
