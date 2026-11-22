@@ -1,0 +1,12 @@
+menu "wiscosat"
+
+config SAT_DEV
+    bool "A dev build (adds the command download)"
+    default n
+    help
+        A dev build is made by ./build --dev into out-dev/ (sdkconfig.dev sets this), never by a flag on the
+        release image in out/. It adds the command download (restart into the ROM's download mode, for esptool
+        with no buttons), says "dev": true in status, and its version ends in -dev. Only a unit kept for
+        development runs one.
+
+endmenu

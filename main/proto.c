@@ -17,6 +17,9 @@ static const struct {
     {"status", CMD_STATUS}, {"key", CMD_KEY},   {"disarm", CMD_DISARM}, {"press", CMD_PRESS},
     {"release", CMD_RELEASE}, {"type", CMD_TYPE}, {"seed", CMD_SEED},     {"update", CMD_UPDATE},
     {"restart", CMD_RESTART}, {"identify", CMD_IDENTIFY},
+#ifdef SAT_DEV
+    {"download", CMD_DOWNLOAD},
+#endif
 };
 
 // a whole number field in [lo, hi]; dflt when absent. NULL, or the error
@@ -214,6 +217,16 @@ const char *proto_check(const cmd_t *c, const host_t *h)
     if (h->firing && (c->kind == CMD_SEED || (c->kind == CMD_KEY && c->key.when == WHEN_CONFIGURED)))
         return "an armed key is firing now";
     return NULL;
+}
+
+void proto_add_build(cJSON *state, const char *version)
+{
+    cJSON_AddStringToObject(state, "version", version);
+#ifdef SAT_DEV
+    cJSON_AddBoolToObject(state, "dev", true);
+#else
+    cJSON_AddBoolToObject(state, "dev", false);
+#endif
 }
 
 char *proto_answer(const char *err, struct cJSON *state)

@@ -231,6 +231,31 @@ static void test_answer(void)
     free(a);
 }
 
+// the dev build (./build --dev, SAT_DEV): download exists only there; state.dev says which build answers
+static void test_dev(void)
+{
+    cmd_t c;
+#ifdef SAT_DEV
+    CHECK(parse("{\"cmd\":\"download\"}", &c) == NULL);
+    CHECK(c.kind == CMD_DOWNLOAD);
+    proto_free(&c);
+#else
+    const char *nonsense = parse_free("{\"cmd\":\"nonsense\"}");
+    const char *err = parse("{\"cmd\":\"download\"}", &c);
+    CHECK(err && nonsense && !strcmp(err, nonsense)); // a release build: as any unknown command
+#endif
+
+    cJSON *s = cJSON_CreateObject();
+    proto_add_build(s, "abc1234");
+    CHECK_HAS(cJSON_GetStringValue(cJSON_GetObjectItem(s, "version")), "abc1234");
+#ifdef SAT_DEV
+    CHECK(cJSON_IsTrue(cJSON_GetObjectItem(s, "dev")));
+#else
+    CHECK(cJSON_IsFalse(cJSON_GetObjectItem(s, "dev")));
+#endif
+    cJSON_Delete(s);
+}
+
 void test_proto(void)
 {
     test_lines();
@@ -239,4 +264,5 @@ void test_proto(void)
     test_update();
     test_check();
     test_answer();
+    test_dev();
 }

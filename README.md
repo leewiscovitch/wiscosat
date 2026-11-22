@@ -13,14 +13,19 @@ unit, the Wi-Fi at a fixed address with back-off. Next: updates over Wi-Fi with 
 Tried on a LILYGO T-Embed (ESP32-S3, WROOM-1-N16R8: 16 MB flash, 8 MB PSRAM), its USB-C port being the chip's
 native USB. Any ESP32-S3 with its native USB on a connector should do.
 
+On USB a unit is `303a:4006`, a boot keyboard and a read-only drive, maker `wiscosat`, and its serial number is its
+MAC as 12 lower-case hex digits (the base MAC, as `esptool` prints it), so the machine it is plugged into names it
+under `/dev/input/by-id/` and `/dev/disk/by-id/`, and tells two units apart.
+
 ## Build
 
 Needs ESP-IDF v5.5.6 (`IDF_PATH`, default `/opt/esp-idf`) with the `esp32s3` tools installed
 (`./install.sh esp32s3` in the ESP-IDF tree).
 
 ```
-./test     # the Linux tests (below); needs only cc and ESP-IDF's tree
-./build    # nothing of a unit is built in
+./test         # the Linux tests (below); needs only cc and ESP-IDF's tree
+./build        # the release image, into out/; nothing of a unit is built in
+./build --dev  # a dev build, into out-dev/ (below)
 ```
 
 What comes out, in `out/`:
@@ -30,6 +35,25 @@ What comes out, in `out/`:
 | `wiscosat.bin` | the app |
 | `flash_args` | what goes where at a first flash (boot loader, partition table, the app slots' state, app) |
 | `wiscosat.sha256` | the app's checksum |
+
+The image's version is `git describe --tags --always --dirty` (`./build` gives it to ESP-IDF as `PROJECT_VER` each
+time): it is in the app description, 32 bytes at offset 48 of `wiscosat.bin`, and in `status` as `version`.
+Read it from a file with `dd if=out/wiscosat.bin bs=1 skip=48 count=32 2>/dev/null | tr -d '\0'`.
+
+### The dev build
+
+`./build --dev` builds into `out-dev/` (the same three files), with its own `sdkconfig` there, from
+`sdkconfig.defaults` and then `sdkconfig.dev` (`CONFIG_SAT_DEV=y`, `main/Kconfig.projbuild`). It is a second build
+folder, never a flag on the release image, so `out/wiscosat.bin` is always the release image. A dev build:
+
+- has the command `download` (below): the unit restarts into the ROM's download mode, so `esptool` can flash it
+  with no one pressing BOOT and RST;
+- says `"dev": true` in `status` (a release build says `false`);
+- has a version ending in `-dev`. `main/CMakeLists.txt` stops a build whose version and configuration disagree (a
+  dev configuration built without `./build --dev`, or the other way round).
+
+Keep a dev build to a unit kept for development: anyone who reaches a unit's channel with its key can then put it
+in download mode, and from there write any image over USB.
 
 ## A unit's settings (enrolling)
 
@@ -94,17 +118,19 @@ code). The task watchdog restarts a firmware whose idle task has been starved fo
 
 `./test` builds the pure parts (below) with the host's `cc` and cJSON from ESP-IDF's tree (`$IDF_PATH`, no
 ESP-IDF build, no board), with AddressSanitizer and UBSan, and runs `tests/`. It prints `test: N checks, 0 failed`
-and exits 0; a failed check prints its file, line and what failed, and exits 1. It needs ESP-IDF's tree only for
+and exits 0; it builds and runs them twice, as the release image's parts and as the dev build's (`-DSAT_DEV`), so it
+prints that line twice. A failed check prints its file, line and what failed, and exits 1. It needs ESP-IDF's tree only for
 `components/json/cJSON` (exit 2 without it). Its output goes to `out/test/`. Both `./test` and `./build` must pass
 before every commit.
 
 What they pin, among others: key names to reports (`f9` → `0x42`, `alt-sysrq-b` → modifier `0x04`, keys `0x46 0x05`,
 seven keys refused, an unknown name named in the error); the US layout for `type`; the armed key's schedule (100 ms
 apart for 3000 ms is 30 reports, then never; missed slots skipped, not bunched; across the counter's wrap); the
-lines (16,384 bytes the longest, `bootloader` gone, an old client's `token` field ignored); "no host" for a key now
+lines (16,384 bytes the longest, `bootloader` gone, an old client's `token` field ignored; `download` only in a dev
+build, else answered as any unknown command; `state.dev`); "no host" for a key now
 with nothing plugged in; a seed refused whole, with the file it is about; the lockout (4 failures fine, the fifth
 60 s, then 120 s, up to 900 s, across the clock's wrap); a unit's settings (an address `192.0.2.999` or none:
-unenrolled).
+unenrolled); the USB serial number made from the MAC (`dc da 0c 52 37 38` → `dcda0c523738`).
 
 ## Layout
 
@@ -116,6 +142,7 @@ unenrolled).
 | `main/settings.{c,h}` | a unit's settings: read from NVS (on the board), checked (pure) |
 | `main/lockout.{c,h}` | pure: the channel's lockout |
 | `main/usb_kbd.c` | the USB device (both interfaces' descriptors, TinyUSB) and the keyboard: tap, press and release; a report the host has not taken within 50 ms is given up |
+| `main/usbserial.{c,h}` | pure: the USB serial number, the unit's MAC as 12 lower-case hex digits |
 | `main/usb_msc.c` | the seed drive: the FAT partition, shown to the host read-only, taken away while a seed is written |
 | `main/keys.{c,h}` | pure: key names (`ctrl-alt-del`) and characters (US layout) to an 8-byte boot report |
 | `main/armed.{c,h}` | pure: the armed key's schedule and counters |
@@ -127,6 +154,7 @@ unenrolled).
 | `tools/mknvs` | a unit's NVS image from a CSV on standard input |
 | `tools/sat-probe` | the bench client: one line over the channel, or a wrong key, or a plain line |
 | `sdkconfig.defaults` | the settings that differ from ESP-IDF's defaults, each with its reason |
+| `sdkconfig.dev`, `main/Kconfig.projbuild` | the dev build's one setting, `CONFIG_SAT_DEV` (`./build --dev`) |
 | `main/idf_component.yml` | the managed components (`espressif/esp_tinyusb`); `dependencies.lock` pins them |
 
 The pure parts include no ESP-IDF header, so they build on Linux as they are; the device parts call them.
@@ -134,8 +162,8 @@ The pure parts include no ESP-IDF header, so they build on Linux as they are; th
 ## Commands
 
 Inside the channel, one JSON object per line, one answer line back: `{"ok":true,"state":{...}}` or
-`{"ok":false,"error":"..."}`. `state` holds, besides the trial's: `name`, `version`, `slot` (the running app slot),
-`wifi`, `channel`.
+`{"ok":false,"error":"..."}`. `state` holds, besides the trial's: `name`, `version`, `dev` (a dev build), `slot`
+(the running app slot), `wifi`, `channel`.
 
 | Command | Fields | What |
 |---|---|---|
@@ -146,8 +174,10 @@ Inside the channel, one JSON object per line, one answer line back: `{"ok":true,
 | `type` | `text` | typed on the US layout; refused whole if a character has no key |
 | `seed` | `files` (`{"name":"content"}`), `encoding` (`text` default, or `base64`), `hold_ms` (0..10000, default 2000) | the drive's files replaced; no files: the drive wiped. At most 8 files, names up to 60 characters, all within the drive; else refused whole, the old seed untouched, the error naming the file |
 | `update`, `restart`, `identify` | | parsed, answered "not in this firmware yet" |
+| `download` | | a dev build only: answers `ok` with the state, then 300 ms later restarts into the ROM's download mode (USB-Serial/JTAG: the unit shows as `303a:1001`, a serial port for `esptool`; no keyboard, no drive, no network until it is flashed or replugged). A release build answers `unknown command` |
 
-The trial's `bootloader` command is gone (`unknown command`); updates over Wi-Fi replace it. A new seed volume is
+The trial's `bootloader` command is gone (`unknown command`); updates over Wi-Fi replace it, and a dev build's
+`download` is the way back when an update cannot be sent. A new seed volume is
 left empty (the trial wrote two placeholder files), so a wipe survives a restart.
 
 ## Licence

@@ -32,3 +32,4 @@ void test_proto(void);
 void test_seedrules(void);
 void test_lockout(void);
 void test_settings(void);
+void test_usbserial(void);

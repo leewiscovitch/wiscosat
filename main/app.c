@@ -15,6 +15,10 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "driver/gpio.h"
+#ifdef SAT_DEV
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
+#endif
 #include "cJSON.h"
 #include "armed.h"
 #include "keys.h"
@@ -224,7 +228,7 @@ static cJSON *state_json(void)
     cJSON *s = cJSON_CreateObject();
     kbd_state(s);
     cJSON_AddStringToObject(s, "name", settings.name);
-    cJSON_AddStringToObject(s, "version", esp_app_get_description()->version);
+    proto_add_build(s, esp_app_get_description()->version);
     const esp_partition_t *slot = esp_ota_get_running_partition();
     cJSON_AddStringToObject(s, "slot", slot ? slot->label : "");
     cJSON_AddNumberToObject(s, "uptime_ms", now_ms());
@@ -247,6 +251,26 @@ static cJSON *state_json(void)
 }
 
 // ---------- commands ----------
+#ifdef SAT_DEV
+// download (a dev build only): the ROM's download mode, so esptool can flash with no buttons. Run 300 ms after the
+// command, so its answer has left first (trial 2's bootloader command, the same two lines)
+static void download_now(void *arg)
+{
+    REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+    esp_restart();
+}
+
+static const char *do_download(void)
+{
+    static esp_timer_handle_t t;
+    const esp_timer_create_args_t args = {.callback = download_now, .name = "download"};
+    if (!t && esp_timer_create(&args, &t) != ESP_OK) return "download: no timer";
+    if (esp_timer_start_once(t, 300 * 1000) != ESP_OK) return "download: already on its way";
+    ev("download mode in 300 ms");
+    return NULL;
+}
+#endif
+
 static const char *do_type(const char *text)
 {
     for (; *text; text++) {
@@ -288,6 +312,9 @@ static const char *run(const cmd_t *c, char *msg, size_t size)
     case CMD_UPDATE:
     case CMD_RESTART:
     case CMD_IDENTIFY: return "not in this firmware yet";
+#ifdef SAT_DEV
+    case CMD_DOWNLOAD: return do_download();
+#endif
     }
     return "unknown command";
 }

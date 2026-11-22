@@ -15,6 +15,9 @@ ESP-IDF. Public.
 - **Every version pinned:** ESP-IDF (v5.5.6, `README.md`), the managed components (`dependencies.lock`, committed)
 - **`./test` and `./build` must pass before every commit** (`./test`: the pure parts, on Linux). A new pure part
   (no ESP-IDF header) gets its tests in `tests/` first
+- **`out/` is always the release image:** a dev build (`./build --dev`, the command `download`) goes to `out-dev/`
+  only, its version ends in `-dev`. Anything only a dev build has sits under `#ifdef SAT_DEV`, and `./test` checks
+  both builds
 - **The flash layout fits 8 MB** (the smallest board in use), whatever the board has
 - C in ESP-IDF's style: four spaces, `snake_case`, `static` for everything a file keeps to itself. Scripts in bash,
   `set -euo pipefail`, one clear line and a non-zero exit on failure

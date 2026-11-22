@@ -1,0 +1,2 @@
+# The dev build: ./build --dev reads it after sdkconfig.defaults (into out-dev/, never out/)
+CONFIG_SAT_DEV=y

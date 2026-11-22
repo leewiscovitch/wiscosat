@@ -6,7 +6,9 @@
 #include "freertos/semphr.h"
 #include "tinyusb.h"
 #include "class/hid/hid_device.h"
+#include "esp_mac.h"
 #include "sat.h"
+#include "usbserial.h"
 
 // a report the host has not collected within this long is given up (the host is gone, or not polling)
 #define GIVE_UP_MS 50
@@ -45,7 +47,9 @@ static const uint8_t cfg_desc[] = {
     TUD_MSC_DESCRIPTOR(1, 5, 0x02, 0x82, 64),
 };
 
-static const char *str_desc[] = {(char[]){0x09, 0x04}, "wiscosat", "satellite keyboard", "0001", "boot keyboard",
+// the serial number is the unit's MAC (usbserial.h), filled in by usb_start
+static char serial[USBSERIAL_LEN + 1] = "000000000000";
+static const char *str_desc[] = {(char[]){0x09, 0x04}, "wiscosat", "satellite keyboard", serial, "boot keyboard",
                                  "seed drive"};
 
 static SemaphoreHandle_t key_lock;
@@ -196,6 +200,8 @@ void kbd_state(cJSON *s)
 void usb_start(void)
 {
     key_lock = xSemaphoreCreateMutex();
+    uint8_t mac[6];
+    if (esp_efuse_mac_get_default(mac) == ESP_OK) usbserial_from_mac(mac, serial); // the base MAC, as esptool shows
     const tinyusb_config_t cfg = {
         .device_descriptor = &dev_desc,
         .string_descriptor = str_desc,

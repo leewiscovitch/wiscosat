@@ -2,6 +2,7 @@
 // is a plain C library; no ESP-IDF in it), tested on Linux.
 //   in:  {"cmd":"key","name":"f9","when":"configured","every_ms":100,"for_ms":3000,"persist":false}
 //   out: {"ok":true,"state":{...}}  or  {"ok":false,"error":"..."}
+// SAT_DEV (a dev build, ./build --dev; Kconfig SAT_DEV) adds the command download; a release build has no trace of it.
 #pragma once
 #include <stdbool.h>
 #include <stddef.h>
@@ -26,6 +27,9 @@ typedef enum {
     CMD_UPDATE,
     CMD_RESTART,
     CMD_IDENTIFY,
+#ifdef SAT_DEV
+    CMD_DOWNLOAD, // a dev build only (./build --dev): restart into the ROM's download mode, for esptool
+#endif
 } cmd_kind_t;
 
 typedef enum { WHEN_NOW, WHEN_CONFIGURED } when_t;
@@ -68,6 +72,9 @@ typedef struct {
 // may the command run now? NULL yes; else the error to answer. A key now (and press, release, type) with no host is
 // refused at once, "no host": nothing is queued unless "when":"configured" was asked
 const char *proto_check(const cmd_t *c, const host_t *h);
+
+// the build into state: "version" (the image's, as built) and "dev" (true in a dev build, which knows download)
+void proto_add_build(struct cJSON *state, const char *version);
 
 // the answer line (no newline; free() it): ok with state when err is NULL, else the error. Takes state (may be NULL)
 char *proto_answer(const char *err, struct cJSON *state);

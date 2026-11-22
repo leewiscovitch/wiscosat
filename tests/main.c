@@ -11,6 +11,7 @@ int main(void)
     test_seedrules();
     test_lockout();
     test_settings();
+    test_usbserial();
     printf("test: %d checks, %d failed\n", check_run, check_failed);
     return check_failed ? 1 : 0;
 }

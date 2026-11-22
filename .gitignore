@@ -3,3 +3,4 @@ out/
 sdkconfig
 sdkconfig.old
 managed_components/
+out-dev/
