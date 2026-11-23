@@ -262,7 +262,7 @@ const char *seed_chunk(const uint8_t *p, size_t n)
 
 const char *seed_end(const char *broke)
 {
-    static char msg[SEED_NAME_MAX + 80];
+    static char msg[SEED_NAME_MAX + 120];
     const char *err = broke;
     if (rx.f && fclose(rx.f) && !err) err = "seed: could not write a file (fclose)";
     rx.f = NULL;
@@ -280,9 +280,14 @@ const char *seed_end(const char *broke)
         for (int i = 0; i < rx.n && !err; i++) {
             int j = 0;
             while (j < nfiles && strcasecmp(files[j].name, rx.names[i])) j++;
-            if (j == nfiles || files[j].size != rx.files[i].size || strcmp(files[j].sha256, rx.sha[i])) {
-                snprintf(msg, sizeof(msg), "seed: \"%s\" read back is not what was sent; the seed drive is wiped",
-                         rx.names[i]);
+            if (j == nfiles) {
+                snprintf(msg, sizeof(msg), "seed: \"%s\" is not on the volume; the seed drive is wiped", rx.names[i]);
+                err = msg;
+            } else if (files[j].size != rx.files[i].size || strcmp(files[j].sha256, rx.sha[i])) {
+                // the size read back tells a short file from wrong bytes (no content is ever shown)
+                snprintf(msg, sizeof(msg), "seed: \"%s\" read back %lu of %lu bytes, %s; the seed drive is wiped",
+                         rx.names[i], (unsigned long)files[j].size, (unsigned long)rx.files[i].size,
+                         files[j].size == rx.files[i].size ? "other bytes" : "another size");
                 err = msg;
             }
         }
