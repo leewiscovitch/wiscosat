@@ -37,3 +37,16 @@ const char *seedrules_label(int n)
 {
     return n > 0 ? "CIDATA" : "EMPTY";
 }
+
+int seedrules_at(const seed_file_t *files, int n, size_t pos, int *file, size_t *left)
+{
+    for (int i = 0; i < n; i++) {
+        if (pos < files[i].size) {
+            *file = i;
+            *left = files[i].size - pos;
+            return 0;
+        }
+        pos -= files[i].size;
+    }
+    return -1;
+}

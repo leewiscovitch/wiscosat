@@ -44,38 +44,6 @@ static const char *str(const cJSON *req, const char *k)
     return cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(req, k));
 }
 
-static int b64_value(unsigned char c)
-{
-    if (c >= 'A' && c <= 'Z') return c - 'A';
-    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-    if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '+') return 62;
-    if (c == '/') return 63;
-    return -1;
-}
-
-// standard base64 with its padding; into out (room for len / 4 * 3). The decoded length, or -1
-static long b64_decode(const char *in, size_t len, uint8_t *out)
-{
-    size_t n = 0;
-    if (len % 4) return -1;
-    for (size_t i = 0; i < len; i += 4) {
-        int v[4], pad = 0;
-        for (int j = 0; j < 4; j++) {
-            unsigned char c = in[i + j];
-            if (c == '=' && i + 4 == len && j >= 2 && (j == 3 || in[i + 3] == '=')) {
-                v[j] = 0;
-                pad++;
-            } else if ((v[j] = b64_value(c)) < 0) return -1;
-        }
-        uint32_t w = (uint32_t)v[0] << 18 | (uint32_t)v[1] << 12 | (uint32_t)v[2] << 6 | (uint32_t)v[3];
-        out[n++] = w >> 16;
-        if (pad < 2) out[n++] = (w >> 8) & 0xFF;
-        if (pad < 1) out[n++] = w & 0xFF;
-    }
-    return (long)n;
-}
-
 static const char *parse_key(const cJSON *req, cmd_t *c)
 {
     c->key.name = str(req, "name");
@@ -109,13 +77,16 @@ static const char *parse_type(const cJSON *req, cmd_t *c)
     return NULL;
 }
 
+static bool is_sha256(const char *s)
+{
+    return s && strlen(s) == 64 && strspn(s, "0123456789abcdef") == 64;
+}
+
+// "files":[{"name":"user-data","size":N,"sha256":"<hex>"},...]; the bytes follow the line
 static const char *parse_seed(const cJSON *req, cmd_t *c)
 {
-    const char *enc = str(req, "encoding");
     const cJSON *files = cJSON_GetObjectItemCaseSensitive(req, "files"), *f;
-    bool b64 = enc && !strcmp(enc, "base64");
-    if (enc && !b64 && strcmp(enc, "text")) return "encoding must be text or base64";
-    if (files && !cJSON_IsObject(files)) return "files must be an object of name: content";
+    if (files && !cJSON_IsArray(files)) return "files must be a list of {name, size, sha256}";
     const char *err = whole(req, "hold_ms", 0, PROTO_SEED_HOLD_MS_MAX, PROTO_SEED_HOLD_MS_DEFAULT, &c->seed.hold_ms);
     if (err) return err;
     int n = files ? cJSON_GetArraySize(files) : 0;
@@ -123,28 +94,20 @@ static const char *parse_seed(const cJSON *req, cmd_t *c)
     if (!(c->seed.files = calloc(n, sizeof(seed_file_t)))) return "out of memory";
     cJSON_ArrayForEach(f, files)
     {
-        const char *txt = cJSON_GetStringValue(f);
-        if (!txt) {
-            snprintf(msg, sizeof(msg), "file %d: content must be a string", c->seed.n + 1);
-            return msg;
-        }
-        size_t tl = strlen(txt);
-        uint8_t *data = malloc(tl + 1); // base64 only ever shrinks
-        if (!data) return "out of memory";
+        int at = c->seed.n + 1;
         seed_file_t *sf = &c->seed.files[c->seed.n++];
-        sf->name = f->string;
-        sf->data = data;
-        if (!b64) {
-            memcpy(data, txt, tl);
-            sf->size = tl;
-            continue;
-        }
-        long len = b64_decode(txt, tl, data);
-        if (len < 0) {
-            snprintf(msg, sizeof(msg), "file %d: bad base64", c->seed.n);
+        uint32_t size;
+        if (!cJSON_IsObject(f)) err = "must be {name, size, sha256}";
+        else if (!(sf->name = str(f, "name"))) err = "no name";
+        else if (!cJSON_GetObjectItemCaseSensitive(f, "size")) err = "no size";
+        else if ((err = whole(f, "size", 0, SEED_BYTES, 0, &size))) err = "size must be a whole number 0..1048576";
+        else if (!is_sha256(sf->sha256 = str(f, "sha256"))) err = "sha256 must be 64 lower-case hex characters";
+        if (err) {
+            snprintf(msg, sizeof(msg), "file %d: %s", at, err);
             return msg;
         }
-        sf->size = (size_t)len;
+        sf->size = size;
+        c->seed.total += size; // at most 9 * 1 MB with nine files: no overflow; seedrules refuses the set
     }
     return NULL;
 }
@@ -155,7 +118,7 @@ static const char *parse_update(const cJSON *req, cmd_t *c)
     const char *err = whole(req, "size", 1, 0xFFFFFFFFu, 0, &c->update.size);
     if (err) return err;
     if (!cJSON_GetObjectItemCaseSensitive(req, "size")) return "no size";
-    if (!sha || strlen(sha) != 64 || strspn(sha, "0123456789abcdef") != 64)
+    if (!is_sha256(sha))
         return "sha256 must be 64 lower-case hex characters";
     memcpy(c->update.sha256, sha, 65);
     return NULL;
@@ -202,7 +165,6 @@ int proto_parse(const char *line, size_t len, cmd_t *out, const char **err)
 
 void proto_free(cmd_t *c)
 {
-    for (int i = 0; i < c->seed.n; i++) free((void *)c->seed.files[i].data);
     free(c->seed.files);
     cJSON_Delete(c->json_);
     memset(c, 0, sizeof(*c));

@@ -1,6 +1,8 @@
 // The channel's lines: one JSON object per line in, a command struct out; and the answer line back. Pure (cJSON
 // is a plain C library; no ESP-IDF in it), tested on Linux.
 //   in:  {"cmd":"key","name":"f9","when":"configured","every_ms":100,"for_ms":3000,"persist":false}
+// seed and update are followed by raw bytes: the unit answers {"ok":true,"ready":true}, the client sends exactly the
+// bytes the line named (update: size; seed: the files' sizes, one after another), the unit answers the final line
 //   out: {"ok":true,"state":{...}}  or  {"ok":false,"error":"..."}
 // SAT_DEV (a dev build, ./build --dev; Kconfig SAT_DEV) adds the command download; a release build has no trace of it.
 #pragma once
@@ -47,8 +49,9 @@ typedef struct {
         const char *text; // every character checked to have a key on the US layout
     } type;
     struct {
-        seed_file_t *files; // the names as given (seedrules judges them), the contents decoded
-        int n;              // 0: wipe the drive
+        seed_file_t *files; // names, sizes and SHA-256s as given (seedrules judges them); the bytes follow the line
+        int n;              // 0: wipe the drive (nothing follows the line)
+        uint32_t total;     // the raw bytes that follow the line: all the files' sizes
         uint32_t hold_ms;   // how long the host sees no medium before the files change
     } seed;
     struct {

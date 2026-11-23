@@ -9,6 +9,7 @@ int main(void)
     test_armed();
     test_proto();
     test_seedrules();
+    test_updrules();
     test_lockout();
     test_settings();
     test_usbserial();

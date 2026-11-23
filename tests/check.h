@@ -30,6 +30,7 @@ void test_keys(void);
 void test_armed(void);
 void test_proto(void);
 void test_seedrules(void);
+void test_updrules(void);
 void test_lockout(void);
 void test_settings(void);
 void test_usbserial(void);

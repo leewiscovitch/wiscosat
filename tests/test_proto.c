@@ -122,43 +122,52 @@ static void test_key(void)
 static void test_seed(void)
 {
     cmd_t c;
+    const char *sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    char line[1024];
 
-    CHECK(parse("{\"cmd\":\"seed\",\"files\":{\"user-data\":\"#cloud-config\\n\",\"meta-data\":\"x\"}}", &c) == NULL);
-    CHECK(c.seed.n == 2 && c.seed.hold_ms == 2000);
-    CHECK(!strcmp(c.seed.files[0].name, "user-data") && c.seed.files[0].size == 14);
-    CHECK(!memcmp(c.seed.files[0].data, "#cloud-config\n", 14));
+    // the files are named with their sizes and SHA-256s; their bytes follow the line raw, in this order (as an
+    // update's do), so a seed is not held to one line
+    snprintf(line, sizeof(line),
+             "{\"cmd\":\"seed\",\"files\":[{\"name\":\"user-data\",\"size\":600000,\"sha256\":\"%s\"},"
+             "{\"name\":\"meta-data\",\"size\":0,\"sha256\":\"%s\"}]}", sha, sha);
+    CHECK(parse(line, &c) == NULL);
+    CHECK(c.seed.n == 2 && c.seed.hold_ms == 2000 && c.seed.total == 600000);
+    CHECK(!strcmp(c.seed.files[0].name, "user-data") && c.seed.files[0].size == 600000);
+    CHECK(!strcmp(c.seed.files[0].sha256, sha) && c.seed.files[1].size == 0);
     proto_free(&c);
 
-    CHECK(parse("{\"cmd\":\"seed\",\"encoding\":\"base64\",\"files\":{\"a\":\"aGVsbG8=\",\"b\":\"\"},\"hold_ms\":0}",
-                &c) == NULL);
-    CHECK(c.seed.n == 2 && c.seed.hold_ms == 0);
-    CHECK(c.seed.files[0].size == 5 && !memcmp(c.seed.files[0].data, "hello", 5));
-    CHECK(c.seed.files[1].size == 0);
-    proto_free(&c);
-    CHECK(parse("{\"cmd\":\"seed\",\"encoding\":\"base64\",\"files\":{\"a\":\"AAEC/w==\"}}", &c) == NULL);
-    CHECK(c.seed.files[0].size == 4 && c.seed.files[0].data[3] == 0xFF);
-    proto_free(&c);
-
-    // no files, or none in it: a wipe
+    // no files, or none in it: a wipe (nothing follows the line)
     CHECK(parse("{\"cmd\":\"seed\"}", &c) == NULL);
-    CHECK(c.seed.n == 0);
+    CHECK(c.seed.n == 0 && c.seed.total == 0);
     proto_free(&c);
-    CHECK(parse("{\"cmd\":\"seed\",\"files\":{}}", &c) == NULL);
-    CHECK(c.seed.n == 0);
+    CHECK(parse("{\"cmd\":\"seed\",\"files\":[],\"hold_ms\":0}", &c) == NULL);
+    CHECK(c.seed.n == 0 && c.seed.hold_ms == 0);
     proto_free(&c);
 
     // parsing does not judge names or counts (seedrules does, and names the file): nine files pass here
-    CHECK(parse("{\"cmd\":\"seed\",\"files\":{\"1\":\"\",\"2\":\"\",\"3\":\"\",\"4\":\"\",\"5\":\"\",\"6\":\"\","
-                "\"7\":\"\",\"8\":\"\",\"9\":\"\"}}", &c) == NULL);
-    CHECK(c.seed.n == 9);
+    char *p = line + snprintf(line, sizeof(line), "{\"cmd\":\"seed\",\"files\":[");
+    for (int i = 1; i <= 9; i++)
+        p += snprintf(p, line + sizeof(line) - p, "%s{\"name\":\"%d\",\"size\":1,\"sha256\":\"%s\"}", i > 1 ? "," : "",
+                      i, sha);
+    snprintf(p, line + sizeof(line) - p, "]}");
+    CHECK(parse(line, &c) == NULL);
+    CHECK(c.seed.n == 9 && c.seed.total == 9);
     proto_free(&c);
 
-    CHECK_HAS(parse_free("{\"cmd\":\"seed\",\"encoding\":\"base64\",\"files\":{\"a\":\"!!\"}}"), "base64");
-    CHECK_HAS(parse_free("{\"cmd\":\"seed\",\"encoding\":\"base64\",\"files\":{\"a\":\"aGVsbG8\"}}"), "base64");
-    CHECK_HAS(parse_free("{\"cmd\":\"seed\",\"encoding\":\"rot13\",\"files\":{}}"), "encoding");
-    CHECK_HAS(parse_free("{\"cmd\":\"seed\",\"files\":{\"a\":1}}"), "string");
-    CHECK_HAS(parse_free("{\"cmd\":\"seed\",\"files\":[]}"), "files");
-    CHECK_HAS(parse_free("{\"cmd\":\"seed\",\"files\":{},\"hold_ms\":10001}"), "hold_ms");
+    // the old form (contents in the line) is refused, not half understood
+    CHECK_HAS(parse_free("{\"cmd\":\"seed\",\"files\":{\"a\":\"x\"}}"), "files");
+    CHECK_HAS(parse_free("{\"cmd\":\"seed\",\"files\":[\"a\"]}"), "file 1");
+    CHECK_HAS(parse_free("{\"cmd\":\"seed\",\"files\":[{\"size\":1}]}"), "name");
+    snprintf(line, sizeof(line), "{\"cmd\":\"seed\",\"files\":[{\"name\":\"a\",\"sha256\":\"%s\"}]}", sha);
+    CHECK_HAS(parse_free(line), "size");
+    snprintf(line, sizeof(line), "{\"cmd\":\"seed\",\"files\":[{\"name\":\"a\",\"size\":-1,\"sha256\":\"%s\"}]}", sha);
+    CHECK_HAS(parse_free(line), "size");
+    CHECK_HAS(parse_free("{\"cmd\":\"seed\",\"files\":[{\"name\":\"a\",\"size\":1,\"sha256\":\"ABC\"}]}"), "sha256");
+    // a file over the whole volume is refused here; what fits is seedrules' to say
+    snprintf(line, sizeof(line), "{\"cmd\":\"seed\",\"files\":[{\"name\":\"a\",\"size\":1048577,\"sha256\":\"%s\"}]}",
+             sha);
+    CHECK_HAS(parse_free(line), "size");
+    CHECK_HAS(parse_free("{\"cmd\":\"seed\",\"files\":[],\"hold_ms\":10001}"), "hold_ms");
 }
 
 static void test_update(void)

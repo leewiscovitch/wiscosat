@@ -9,7 +9,7 @@ void test_seedrules(void)
     int bad;
     seed_file_t f[9];
     static const char *names[9] = {"a", "b", "c", "d", "e", "f", "g", "h", "i"};
-    for (int i = 0; i < 9; i++) f[i] = (seed_file_t){names[i], NULL, 10};
+    for (int i = 0; i < 9; i++) f[i] = (seed_file_t){names[i], 10, NULL};
 
     // none: a wipe; eight: the most
     CHECK(seedrules_check(f, 0, 1000, &err, &bad) == 0);
@@ -22,7 +22,7 @@ void test_seedrules(void)
     CHECK(err != NULL);
 
     // names: 60 characters is the longest; no folders, nothing FAT cannot hold
-    seed_file_t one[2] = {{"user-data", NULL, 1}, {N61, NULL, 1}};
+    seed_file_t one[2] = {{"user-data", 1, NULL}, {N61, 1, NULL}};
     CHECK(strlen(N61) == 61);
     bad = -1;
     CHECK(seedrules_check(one, 2, 1000, &err, &bad) == -1 && bad == 1);
@@ -38,12 +38,12 @@ void test_seedrules(void)
     }
 
     // the same name twice (FAT does not tell case apart)
-    seed_file_t dup[2] = {{"user-data", NULL, 1}, {"User-Data", NULL, 1}};
+    seed_file_t dup[2] = {{"user-data", 1, NULL}, {"User-Data", 1, NULL}};
     bad = -1;
     CHECK(seedrules_check(dup, 2, 1000, &err, &bad) == -1 && bad == 1);
 
     // room: the file that does not fit is the one named
-    seed_file_t big[3] = {{"a", NULL, 400}, {"b", NULL, 600}, {"c", NULL, 1}};
+    seed_file_t big[3] = {{"a", 400, NULL}, {"b", 600, NULL}, {"c", 1, NULL}};
     bad = -1;
     CHECK(seedrules_check(big, 2, 1000, &err, &bad) == 0);
     CHECK(seedrules_check(big, 3, 1000, &err, &bad) == -1 && bad == 2);
@@ -54,4 +54,15 @@ void test_seedrules(void)
     CHECK(!strcmp(seedrules_label(0), "EMPTY"));
     CHECK(!strcmp(seedrules_label(1), "CIDATA"));
     CHECK(!strcmp(seedrules_label(SEED_MAX_FILES), "CIDATA"));
+
+    // the raw bytes after a seed's line, split into its files in order; an empty file takes none
+    seed_file_t set[4] = {{"a", 3, NULL}, {"e", 0, NULL}, {"b", 2, NULL}, {"c", 0, NULL}};
+    int i;
+    size_t left;
+    CHECK(seedrules_at(set, 4, 0, &i, &left) == 0 && i == 0 && left == 3);
+    CHECK(seedrules_at(set, 4, 2, &i, &left) == 0 && i == 0 && left == 1);
+    CHECK(seedrules_at(set, 4, 3, &i, &left) == 0 && i == 2 && left == 2); // "e" has no bytes
+    CHECK(seedrules_at(set, 4, 4, &i, &left) == 0 && i == 2 && left == 1);
+    CHECK(seedrules_at(set, 4, 5, &i, &left) == -1); // past the last byte
+    CHECK(seedrules_at(set, 0, 0, &i, &left) == -1);
 }
