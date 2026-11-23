@@ -43,4 +43,63 @@ config SAT_LED_APA102_COUNT
     depends on SAT_LED_APA102
     default 7
 
+choice SAT_SCREEN
+    prompt "The screen that shows the unit's name"
+    default SAT_SCREEN_ST7789
+    help
+        The unit's name, large, and its address and version below, drawn once after USB has started. none: a board
+        with no screen.
+
+config SAT_SCREEN_ST7789
+    bool "An ST7789 on SPI (LilyGO T-Embed: 320x170, MOSI 11, SCLK 12, CS 10, DC 13, RST 9, backlight 15)"
+config SAT_SCREEN_NONE
+    bool "none"
+endchoice
+
+config SAT_SCREEN_MOSI
+    int "Screen MOSI GPIO"
+    depends on SAT_SCREEN_ST7789
+    default 11
+config SAT_SCREEN_SCLK
+    int "Screen SCLK GPIO"
+    depends on SAT_SCREEN_ST7789
+    default 12
+config SAT_SCREEN_CS
+    int "Screen CS GPIO"
+    depends on SAT_SCREEN_ST7789
+    default 10
+config SAT_SCREEN_DC
+    int "Screen DC GPIO"
+    depends on SAT_SCREEN_ST7789
+    default 13
+config SAT_SCREEN_RST
+    int "Screen reset GPIO"
+    depends on SAT_SCREEN_ST7789
+    default 9
+config SAT_SCREEN_BL
+    int "Screen backlight GPIO"
+    depends on SAT_SCREEN_ST7789
+    default 15
+config SAT_SCREEN_WIDTH
+    int "Screen width in landscape"
+    depends on SAT_SCREEN_ST7789
+    default 320
+config SAT_SCREEN_HEIGHT
+    int "Screen height in landscape"
+    depends on SAT_SCREEN_ST7789
+    default 170
+config SAT_SCREEN_GAP
+    int "Rows of the controller's RAM before the panel's first (a 170-row panel on a 240-row ST7789: 35)"
+    depends on SAT_SCREEN_ST7789
+    default 35
+config SAT_SCREEN_FLIP
+    bool "Turn the picture by 180 degrees"
+    depends on SAT_SCREEN_ST7789
+    default n
+config SAT_SCREEN_BRIGHTNESS
+    int "Backlight, percent (dim by default: seen, not a lamp)"
+    depends on SAT_SCREEN_ST7789
+    range 1 100
+    default 20
+
 endmenu

@@ -411,6 +411,8 @@ void app_main(void)
     strlcpy(settings.wifi_ssid, "no-such-network-rollback-test", sizeof(settings.wifi_ssid));
     ev("broken build: wrong Wi-Fi name on purpose");
 #endif
+    const char *version = esp_app_get_description()->version;
+    screen_show(enrolled ? settings.name : "unenrolled", enrolled ? settings.ip_str : "", version);
     if (!enrolled) {
         ev("unenrolled: no network");
         update_trial_start(); // it cannot prove itself: the old image comes back in 120 s

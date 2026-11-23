@@ -55,6 +55,9 @@ bool update_running(void);
 // led.c: identify; NULL when the board's LED blinks, else why not ("no led")
 const char *led_identify(void);
 
+// screen.c: the name, large, and two small lines below, drawn once in a task of its own (none: nothing)
+void screen_show(const char *name, const char *line2, const char *line3);
+
 // wifi.c: the network at the unit's fixed address, reconnecting with back-off
 void wifi_start(const settings_t *s);
 void wifi_state(cJSON *st);

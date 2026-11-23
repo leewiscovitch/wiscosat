@@ -1,5 +1,5 @@
 idf_component_register(SRCS "app.c" "usb_kbd.c" "usb_msc.c" "wifi.c" "channel.c" "settings.c" "keys.c" "armed.c"
-                            "proto.c" "seedrules.c" "updrules.c" "lockout.c" "usbserial.c" "update.c" "led.c" "wlsplit.c" "wlfix.c"
+                            "proto.c" "seedrules.c" "updrules.c" "lockout.c" "usbserial.c" "update.c" "led.c" "screen.c" "wlsplit.c" "wlfix.c"
                        INCLUDE_DIRS ".")
 
 # The pure parts know the dev build by the define SAT_DEV (as ./test builds them), not by sdkconfig.h

@@ -18,6 +18,17 @@ On USB a unit is `303a:4006`, a boot keyboard and a read-only drive, maker `wisc
 MAC as 12 lower-case hex digits (the base MAC, as `esptool` prints it), so the machine it is plugged into names it
 under `/dev/input/by-id/` and `/dev/disk/by-id/`, and tells two units apart.
 
+### The screen
+
+So a person tells units apart at a glance, the screen shows the unit's name (from its NVS) large, and its address and
+the firmware's version small below; a board with no settings shows `unenrolled`. Drawn once, in a task of its own at a
+low priority after USB has started, so the keyboard never waits for it. The backlight is dim (20 %, Kconfig
+`SAT_SCREEN_BRIGHTNESS`), so it does not light the room or glare in a camera. Kconfig `SAT_SCREEN`: the T-Embed's
+ST7789 (320x170 in landscape; its pins, the 35-row offset of a 170-row panel and `SAT_SCREEN_FLIP` for a board turned
+round are settings), or `none` for a board with no screen. A fault on the way (no memory, the SPI bus) is an event in
+`status`; the unit works on with a dark screen. What the screen shows is not refreshed: a changed address shows after
+a restart.
+
 ## Build
 
 Needs ESP-IDF v5.5.6 (`IDF_PATH`, default `/opt/esp-idf`) with the `esp32s3` tools installed
@@ -228,6 +239,7 @@ sector 97: 20 pieces, none over a boundary).
 | `main/update.c` | the update: the other slot, the SHA-256, the trial and the rollback |
 | `main/updrules.{c,h}` | pure: what an update may do (its size, one at a time, its end) and the new image's trial |
 | `main/led.c` | `identify`: the board's LED (Kconfig `SAT_LED`) |
+| `main/screen.c`, `main/font5x7.h` | the screen: the unit's name, address and version (Kconfig `SAT_SCREEN`); the 5x7 font, data only |
 | `main/keys.{c,h}` | pure: key names (`ctrl-alt-del`) and characters (US layout) to an 8-byte boot report |
 | `main/armed.{c,h}` | pure: the armed key's schedule and counters |
 | `main/proto.{c,h}` | pure: a line to a command (every field checked, defaults filled in), and the answer line |
@@ -238,7 +250,7 @@ sector 97: 20 pieces, none over a boundary).
 | `tools/mknvs` | a unit's NVS image from a CSV on standard input |
 | `tools/sat-probe` | the bench client: one line over the channel, or a wrong key, or a plain line |
 | `sdkconfig.defaults` | the settings that differ from ESP-IDF's defaults, each with its reason |
-| `sdkconfig.dev`, `sdkconfig.broken`, `main/Kconfig.projbuild` | the dev build's setting `CONFIG_SAT_DEV` (`./build --dev`), the broken one's `CONFIG_SAT_BROKEN` (`--broken`), the LED (`SAT_LED`) |
+| `sdkconfig.dev`, `sdkconfig.broken`, `main/Kconfig.projbuild` | the dev build's setting `CONFIG_SAT_DEV` (`./build --dev`), the broken one's `CONFIG_SAT_BROKEN` (`--broken`), the LED (`SAT_LED`), the screen (`SAT_SCREEN_*`) |
 | `main/idf_component.yml` | the managed components (`espressif/esp_tinyusb`); `dependencies.lock` pins them |
 
 The pure parts include no ESP-IDF header, so they build on Linux as they are; the device parts call them.
