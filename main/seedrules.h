@@ -16,3 +16,7 @@ typedef struct {
 // 0 when the whole set may be written (none: the volume is wiped). -1 when not, with *err and *bad, the index of
 // the file it is about; the set is then refused whole
 int seedrules_check(const seed_file_t *files, int n, size_t room, const char **err, int *bad);
+
+// The volume's label for a seed of n files: "CIDATA", or "EMPTY" when it has none (a wiped seed is no cloud-init
+// seed: a host's NoCloud must not take it in place of a real CIDATA drive elsewhere)
+const char *seedrules_label(int n);

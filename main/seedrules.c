@@ -32,3 +32,8 @@ int seedrules_check(const seed_file_t *files, int n, size_t room, const char **e
     }
     return 0;
 }
+
+const char *seedrules_label(int n)
+{
+    return n > 0 ? "CIDATA" : "EMPTY";
+}

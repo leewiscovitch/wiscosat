@@ -174,11 +174,13 @@ Inside the channel, one JSON object per line, one answer line back: `{"ok":true,
 | `type` | `text` | typed on the US layout; refused whole if a character has no key |
 | `seed` | `files` (`{"name":"content"}`), `encoding` (`text` default, or `base64`), `hold_ms` (0..10000, default 2000) | the drive's files replaced; no files: the drive wiped. At most 8 files, names up to 60 characters, all within the drive; else refused whole, the old seed untouched, the error naming the file |
 | `update`, `restart`, `identify` | | parsed, answered "not in this firmware yet" |
-| `download` | | a dev build only: answers `ok` with the state, then 300 ms later restarts into the ROM's download mode (USB-Serial/JTAG: the unit shows as `303a:1001`, a serial port for `esptool`; no keyboard, no drive, no network until it is flashed or replugged). A release build answers `unknown command` |
+| `download` | | a dev build only: answers `ok` with the state, then 300 ms later restarts into the ROM's download mode over the USB the app was using, USB-OTG (the unit shows as `303a:0009`, "ESP32-S3", serial number its MAC with colons: a serial port for `esptool`; not `303a:1001`, the USB-Serial/JTAG of BOOT held at reset); no keyboard, no drive, no network until it is flashed (`--after watchdog_reset` starts the app; esptool 4.8 or later) or replugged. The ROM resets its USB when `esptool` lets go, so a second `esptool` call waits for the port to come back. A release build answers `unknown command` |
 
 The trial's `bootloader` command is gone (`unknown command`); updates over Wi-Fi replace it, and a dev build's
 `download` is the way back when an update cannot be sent. A new seed volume is
-left empty (the trial wrote two placeholder files), so a wipe survives a restart.
+left empty (the trial wrote two placeholder files), so a wipe survives a restart. The volume is labelled `CIDATA`
+while it holds files and **`EMPTY` with none**: a wiped seed is no cloud-init seed, so a host's NoCloud never reads it
+in place of a real `CIDATA` drive plugged in beside it (with two, which one is read is the device order's).
 
 ## Licence
 

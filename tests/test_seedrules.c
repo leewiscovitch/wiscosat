@@ -48,4 +48,10 @@ void test_seedrules(void)
     CHECK(seedrules_check(big, 2, 1000, &err, &bad) == 0);
     CHECK(seedrules_check(big, 3, 1000, &err, &bad) == -1 && bad == 2);
     CHECK_HAS(err, "room");
+
+    // the volume's label: a wiped seed is no cloud-init seed, so a host's NoCloud never takes it in place of the
+    // real one on another drive (two CIDATA drives: which one is read is the device order's)
+    CHECK(!strcmp(seedrules_label(0), "EMPTY"));
+    CHECK(!strcmp(seedrules_label(1), "CIDATA"));
+    CHECK(!strcmp(seedrules_label(SEED_MAX_FILES), "CIDATA"));
 }

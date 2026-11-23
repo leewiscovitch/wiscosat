@@ -1,4 +1,4 @@
-// The seed drive: a 1 MB FAT volume labelled CIDATA in the "seed" flash partition (wear levelling, 512-byte
+// The seed drive: a 1 MB FAT volume labelled CIDATA (EMPTY while it holds no file) in the "seed" flash partition (wear levelling, 512-byte
 // sectors), shown to the host as a read-only USB drive (for example cloud-init's NoCloud source).
 // esp_tinyusb hands the volume to the host when the host configures the device, and back to the firmware when it
 // is unconfigured; while the firmware has it mounted, the host's TEST UNIT READY gets "medium not present". A seed
@@ -79,11 +79,13 @@ static esp_err_t take(void)
     return tinyusb_msc_storage_mount(SEED_PATH);
 }
 
+// the label for the files there now (seedrules_label); after scan()
 static void label(void)
 {
-    char l[24] = "";
+    char l[24] = "", want[12] = "0:";
+    strlcat(want, seedrules_label(nfiles), sizeof(want));
     f_getlabel("0:", l, NULL);
-    if (strcmp(l, "CIDATA")) f_setlabel("0:CIDATA");
+    if (strcmp(l, want + 2)) f_setlabel(want);
 }
 
 static void measure(void)
@@ -118,9 +120,9 @@ void seed_init(void)
         state = "mount failed";
         return;
     }
-    label();
     measure();
     scan(); // a new volume stays empty: files come only from a seed command, and a wipe survives a restart
+    label();
     state = "ready";
     // left mounted here: USB is not up yet; esp_tinyusb unmounts it for the host when the host configures
 }
@@ -165,8 +167,8 @@ const char *seed_write(const seed_file_t *nf, int n, uint32_t hold_ms)
             err = msg;
         }
     }
-    label();
     scan();
+    label();
     written_ms = now_ms();
     vTaskDelay(pdMS_TO_TICKS(200));
     tinyusb_msc_storage_unmount(); // the host's next TEST UNIT READY finds the medium again
