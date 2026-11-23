@@ -6,7 +6,8 @@ a machine's firmware menus or boot loader, and handing an unattended installer i
 the machine.
 
 Status: one image for every unit, a unit's settings in its NVS, the channel TLS 1.3 with a pre-shared key per
-unit, the Wi-Fi at a fixed address with back-off. Next: updates over Wi-Fi with rollback, `restart`, `identify`.
+unit, the Wi-Fi at a fixed address with back-off; a seed of up to 1 MB sent as raw bytes and shown to a running host
+as a media change; updates over Wi-Fi into the other app slot with rollback; `restart`, `identify`.
 
 ## Hardware
 
@@ -26,6 +27,7 @@ Needs ESP-IDF v5.5.6 (`IDF_PATH`, default `/opt/esp-idf`) with the `esp32s3` too
 ./test         # the Linux tests (below); needs only cc and ESP-IDF's tree
 ./build        # the release image, into out/; nothing of a unit is built in
 ./build --dev  # a dev build, into out-dev/ (below)
+./build --dev --broken  # the rollback check's image, into out-broken/ (below)
 ```
 
 What comes out, in `out/`:
@@ -51,6 +53,11 @@ folder, never a flag on the release image, so `out/wiscosat.bin` is always the r
 - says `"dev": true` in `status` (a release build says `false`);
 - has a version ending in `-dev`. `main/CMakeLists.txt` stops a build whose version and configuration disagree (a
   dev configuration built without `./build --dev`, or the other way round).
+
+`./build --dev --broken` is a dev build that cannot prove itself after an update: `sdkconfig.broken`
+(`CONFIG_SAT_BROKEN`) puts a Wi-Fi name no network has over the unit's settings, so it never joins, and the
+bootloader takes the old image back (below, "Updates"). Into `out-broken/`, version ending in `-broken-dev`; for the
+rollback check only.
 
 Keep a dev build to a unit kept for development: anyone who reaches a unit's channel with its key can then put it
 in download mode, and from there write any image over USB.
@@ -107,6 +114,52 @@ after it.
 `tools/sat-probe` is the bench client (Python 3.13 or later, standard library): `SAT_KEY_FILE=<key file>
 tools/sat-probe 192.0.2.61 --name unit-1 [--line '{"cmd":"status"}'] [--count N] [--wrong-key | --plain]`.
 
+## Raw bytes after a line (seed, update)
+
+`seed` with files and `update` are followed by raw bytes, not by more lines: the unit answers the line
+`{"ok":true,"ready":true}` (or an error, and nothing follows), the client sends exactly the bytes the line named
+(`update`: `size`; `seed`: the files' sizes, one file after another in the line's order), and the unit answers the
+final line. Bytes that stop for 10 s break the transfer off (a lost Wi-Fi looks like that), as does a closed
+connection; the unit cleans up (below) and takes the next connection. Anything the client sends after the bytes
+and before the final answer is dropped. So a seed is not held to one line (16 KB) and an image goes in about 14 s.
+
+## The seed
+
+The drive is a 1 MB FAT volume (wear levelling, 512-byte sectors, ESP-IDF's **safe** mode: about 16 KB/s, so a full
+seed takes about a minute; `user-data` and `meta-data` a few seconds). A seed with files:
+
+1. checked whole before anything changes (8 files, names, the room: `seedrules.c`), else refused, the old seed kept;
+2. the volume taken from the host, which gets NOT READY, MEDIUM NOT PRESENT for `hold_ms` (default 2 s) and the
+   whole write; every old file removed;
+3. the bytes written straight to the files as they arrive;
+4. every file read back from the volume against the SHA-256 the line named;
+5. the volume labelled `CIDATA` and given back: the host's next TEST UNIT READY gets **UNIT ATTENTION, NOT READY TO
+   READY CHANGE** (28h/00h) once, then the medium. A running Linux re-reads the drive (`udevadm monitor`: a
+   `change` with `DISK_MEDIA_CHANGE=1` as it goes and as it comes back; the kernel logs the capacity 1984 → 0 →
+   1984 blocks) with no replug.
+
+A seed that breaks off, cannot be written or reads back wrong leaves the volume **wiped** (`EMPTY`), never half a
+seed; the answer says so. The UNIT ATTENTION is answered in front of esp_tinyusb's own TEST UNIT READY by the
+linker's `--wrap` (`main/CMakeLists.txt`, `usb_msc.c`).
+
+Wear levelling's **performance** mode (one erase per 4 KB) was tried and dropped: a seed written over the files of an
+earlier one read back wrong (the read-back caught it every time; safe mode passed the same seeds twice in a row).
+Changing the mode also changes the partition's layout: a unit that ran another mode needs its seed partition erased
+once (`esptool erase_region 0x420000 0x100000`; the firmware formats it).
+
+## Updates
+
+`update` writes the image into the other app slot as it arrives (`esp_ota` with sequential writes, so nothing waits
+for a whole slot's erase), checks the SHA-256 of what arrived against the line's, lets `esp_ota_end` check the image
+itself, sets that slot to boot, answers, and restarts 1 s later. Anything short of that leaves the old slot booting
+and the answer says why ("old version kept"). One update at a time; none while a seed is written.
+
+The new image is **on trial** (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, `status`: `update.trial`): it keeps itself
+(`esp_ota_mark_app_valid_cancel_rollback`) only once it has joined the Wi-Fi **and** answered a command over the
+channel; 120 s after its start without both, it marks itself invalid and the bootloader starts the old image
+(`updrules.c` says which). Rollback lives in the **bootloader**, which an update does not replace: a unit whose
+bootloader was flashed before this setting needs one full flash by `esptool` (`write_flash @flash_args`) first.
+
 ## Wi-Fi and the watchdog
 
 USB starts before the network and never waits for it: the unit is a keyboard about 0.4 s after it starts, whatever
@@ -128,7 +181,10 @@ seven keys refused, an unknown name named in the error); the US layout for `type
 apart for 3000 ms is 30 reports, then never; missed slots skipped, not bunched; across the counter's wrap); the
 lines (16,384 bytes the longest, `bootloader` gone, an old client's `token` field ignored; `download` only in a dev
 build, else answered as any unknown command; `state.dev`); "no host" for a key now
-with nothing plugged in; a seed refused whole, with the file it is about; the lockout (4 failures fine, the fifth
+with nothing plugged in; a seed refused whole, with the file it is about; a seed's raw bytes split into its files
+(an empty file takes none); an update refused before any byte (size 0, over the slot, one running, a seed being
+written) and its end (bytes short, another SHA-256); the new image's trial (proven only with the Wi-Fi joined and a
+command answered, rolled back at 120 s); the lockout (4 failures fine, the fifth
 60 s, then 120 s, up to 900 s, across the clock's wrap); a unit's settings (an address `192.0.2.999` or none:
 unenrolled); the USB serial number made from the MAC (`dc da 0c 52 37 38` → `dcda0c523738`).
 
@@ -143,18 +199,21 @@ unenrolled); the USB serial number made from the MAC (`dc da 0c 52 37 38` → `d
 | `main/lockout.{c,h}` | pure: the channel's lockout |
 | `main/usb_kbd.c` | the USB device (both interfaces' descriptors, TinyUSB) and the keyboard: tap, press and release; a report the host has not taken within 50 ms is given up |
 | `main/usbserial.{c,h}` | pure: the USB serial number, the unit's MAC as 12 lower-case hex digits |
-| `main/usb_msc.c` | the seed drive: the FAT partition, shown to the host read-only, taken away while a seed is written |
+| `main/usb_msc.c` | the seed drive: the FAT partition, shown to the host read-only, taken away while a seed is written, its bytes streamed in and read back; the UNIT ATTENTION as it comes back |
+| `main/update.c` | the update: the other slot, the SHA-256, the trial and the rollback |
+| `main/updrules.{c,h}` | pure: what an update may do (its size, one at a time, its end) and the new image's trial |
+| `main/led.c` | `identify`: the board's LED (Kconfig `SAT_LED`) |
 | `main/keys.{c,h}` | pure: key names (`ctrl-alt-del`) and characters (US layout) to an 8-byte boot report |
 | `main/armed.{c,h}` | pure: the armed key's schedule and counters |
 | `main/proto.{c,h}` | pure: a line to a command (every field checked, defaults filled in), and the answer line |
-| `main/seedrules.{c,h}` | pure: what a seed may hold (8 files, names up to 60 characters FAT can keep, the room) |
+| `main/seedrules.{c,h}` | pure: what a seed may hold (8 files, names up to 60 characters FAT can keep, the room), where its raw bytes go |
 | `main/sat.h` | how the device parts call each other |
 | `tests/` | the Linux tests of the pure parts; `./test` runs them |
 | `partitions.csv` | NVS (`0x9000`, 24 KB), the app slots' state, PHY data, two app slots (2 MB each), the seed (1 MB, FAT); 8 MB |
 | `tools/mknvs` | a unit's NVS image from a CSV on standard input |
 | `tools/sat-probe` | the bench client: one line over the channel, or a wrong key, or a plain line |
 | `sdkconfig.defaults` | the settings that differ from ESP-IDF's defaults, each with its reason |
-| `sdkconfig.dev`, `main/Kconfig.projbuild` | the dev build's one setting, `CONFIG_SAT_DEV` (`./build --dev`) |
+| `sdkconfig.dev`, `sdkconfig.broken`, `main/Kconfig.projbuild` | the dev build's setting `CONFIG_SAT_DEV` (`./build --dev`), the broken one's `CONFIG_SAT_BROKEN` (`--broken`), the LED (`SAT_LED`) |
 | `main/idf_component.yml` | the managed components (`espressif/esp_tinyusb`); `dependencies.lock` pins them |
 
 The pure parts include no ESP-IDF header, so they build on Linux as they are; the device parts call them.
@@ -163,7 +222,8 @@ The pure parts include no ESP-IDF header, so they build on Linux as they are; th
 
 Inside the channel, one JSON object per line, one answer line back: `{"ok":true,"state":{...}}` or
 `{"ok":false,"error":"..."}`. `state` holds, besides the trial's: `name`, `version`, `dev` (a dev build), `slot`
-(the running app slot), `wifi`, `channel`.
+(the running app slot), `update` (`running`, `trial`: `none`, `on trial`, `proven`, `rolling back`; `boots`: the slot
+the next start boots), `wifi`, `channel`.
 
 | Command | Fields | What |
 |---|---|---|
@@ -172,8 +232,10 @@ Inside the channel, one JSON object per line, one answer line back: `{"ok":true,
 | `disarm` | | the armed key goes |
 | `press`, `release` | `name` (`release` without it: everything up) | hold keys down, let them go |
 | `type` | `text` | typed on the US layout; refused whole if a character has no key |
-| `seed` | `files` (`{"name":"content"}`), `encoding` (`text` default, or `base64`), `hold_ms` (0..10000, default 2000) | the drive's files replaced; no files: the drive wiped. At most 8 files, names up to 60 characters, all within the drive; else refused whole, the old seed untouched, the error naming the file |
-| `update`, `restart`, `identify` | | parsed, answered "not in this firmware yet" |
+| `seed` | `files` (`[{"name":"user-data","size":N,"sha256":"<64 hex>"},...]`), `hold_ms` (0..10000, default 2000) | `ready`, then the files' bytes raw (above); the drive's files replaced, read back, given back as a media change ("The seed"). No files: the drive wiped (no bytes follow). At most 8 files, names up to 60 characters, all within the drive; else refused whole before any byte, the old seed untouched, the error naming the file |
+| `update` | `size` (1.. the slot), `sha256` | `ready`, then `size` bytes raw; the final answer, then a restart into the new slot 1 s later ("Updates") |
+| `restart` | | answered, then restarted 1 s later (the host sees the USB device go and come back) |
+| `identify` | | the LED blinks for 5 s (T-Embed: its ring of 7 APA102); a board with none: `no led on this board` |
 | `download` | | a dev build only: answers `ok` with the state, then 300 ms later restarts into the ROM's download mode over the USB the app was using, USB-OTG (the unit shows as `303a:0009`, "ESP32-S3", serial number its MAC with colons: a serial port for `esptool`; not `303a:1001`, the USB-Serial/JTAG of BOOT held at reset); no keyboard, no drive, no network until it is flashed (`--after watchdog_reset` starts the app; esptool 4.8 or later) or replugged. The ROM resets its USB when `esptool` lets go, so a second `esptool` call waits for the port to come back. A release build answers `unknown command` |
 
 The trial's `bootloader` command is gone (`unknown command`); updates over Wi-Fi replace it, and a dev build's

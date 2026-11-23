@@ -16,6 +16,7 @@
 #define PORT "5577"
 #define HANDSHAKE_MS 5000 // a handshake that stalls longer is a failed one
 #define IDLE_MS 60000     // a connection with no line for this long is closed
+#define RAW_STALL_MS 10000 // raw bytes (seed, update) that stop for this long: the transfer is broken off
 #define BUF_LEN (PROTO_LINE_MAX + 2) // a whole line, its newline and a NUL
 
 static const settings_t *me;
@@ -43,6 +44,47 @@ static bool send_all(mbedtls_ssl_context *ssl, const char *p, size_t n)
     return true;
 }
 
+static bool send_line(mbedtls_ssl_context *ssl, char *out)
+{
+    bool sent = out && send_all(ssl, out, strlen(out)) && send_all(ssl, "\n", 1);
+    free(out);
+    if (sent) app_answered();
+    return sent;
+}
+
+// the raw bytes after a seed's or an update's line: the have bytes already in buf first, then the rest. The final
+// answer is sent; false when the connection is done with (broken, or the bytes stopped)
+static bool take_raw(mbedtls_ssl_context *ssl, char *buf, size_t have, const raw_t *raw)
+{
+    static char why[64];
+    uint32_t got = 0;
+    const char *err = NULL, *broke = NULL;
+    mbedtls_ssl_conf_read_timeout(&conf, RAW_STALL_MS);
+    while (got < raw->size && !err) {
+        int n = have;
+        if (!n) {
+            uint32_t want = raw->size - got;
+            n = mbedtls_ssl_read(ssl, (unsigned char *)buf, want < BUF_LEN - 1 ? want : BUF_LEN - 1);
+            if (n == MBEDTLS_ERR_SSL_WANT_READ || n == MBEDTLS_ERR_SSL_WANT_WRITE ||
+                n == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET)
+                continue;
+            if (n <= 0) {
+                snprintf(why, sizeof(why), "broke off after %lu of %lu bytes", (unsigned long)got,
+                         (unsigned long)raw->size);
+                broke = why;
+                break;
+            }
+        }
+        have = 0;
+        err = raw->chunk((const uint8_t *)buf, n);
+        got += n;
+    }
+    mbedtls_ssl_conf_read_timeout(&conf, IDLE_MS);
+    // a chunk's error is the answer; a broken transfer is cleaned up, its answer most likely lost
+    char *out = raw->end(err ? err : broke);
+    return send_line(ssl, out) && !err && !broke;
+}
+
 static void serve(mbedtls_ssl_context *ssl, char *buf)
 {
     size_t len = 0;
@@ -57,12 +99,22 @@ static void serve(mbedtls_ssl_context *ssl, char *buf)
         buf[len] = 0;
         char *nl;
         while ((nl = memchr(buf, '\n', len))) {
-            char *out = app_handle_line(buf, nl - buf);
-            bool sent = out && send_all(ssl, out, strlen(out)) && send_all(ssl, "\n", 1);
-            free(out);
-            if (!sent) return;
+            raw_t raw = {0};
+            char *out = app_handle_line(buf, nl - buf, &raw);
             len -= (nl + 1 - buf);
             memmove(buf, nl + 1, len + 1);
+            if (!send_line(ssl, out)) {
+                if (raw.size) free(raw.end("the client went before its bytes"));
+                return;
+            }
+            if (raw.size) { // the raw bytes the line named; nothing else is read in between
+                size_t have = len < raw.size ? len : raw.size;
+                // take_raw reads into buf: whatever came after the raw bytes, before the final answer, is dropped
+                // (a client waits for that answer)
+                if (!take_raw(ssl, buf, have, &raw)) return;
+                len = 0;
+                buf[0] = 0;
+            }
         }
         if (len >= BUF_LEN - 1) { // no newline in more than a line's bytes: say so instead of a silent close
             send_all(ssl, PROTO_LINE_TOO_LONG "\n", sizeof(PROTO_LINE_TOO_LONG "\n") - 1);

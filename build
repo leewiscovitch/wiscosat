@@ -4,7 +4,8 @@
 # where at a first flash: esptool.py write_flash @flash_args, run in <out>/) and <out>/wiscosat.sha256.
 # The output goes to out/ (idf.py -B out): a folder build/ cannot sit beside this script.
 # A dev build (sdkconfig.dev on top of sdkconfig.defaults, its own sdkconfig in out-dev/) adds the command download
-# and its version ends in -dev; out/ is always the release image. The version is git describe --tags --always
+# and its version ends in -dev; out/ is always the release image. ./build --dev --broken: a dev build that cannot
+# join any Wi-Fi (sdkconfig.broken), into out-broken/, version ending in -broken-dev: the rollback check's image. The version is git describe --tags --always
 # --dirty, in the image's app description (32 bytes at offset 48 of the .bin) and in status.
 # Exit 0 built, 1 the build failed, 2 no ESP-IDF or a wrong argument. Nothing of a unit is built in: its settings
 # are in its NVS.
@@ -14,12 +15,15 @@ cd "$(dirname "$(readlink -f "$0")")"
 idf_path="${IDF_PATH:-/opt/esp-idf}"
 die() { echo "build: $1" >&2; exit "${2:-1}"; }
 
-case "${1:-}" in
+usage="usage: ./build [--dev [--broken]]"
+case "${*:-}" in
 '') out=out sdkconfig=sdkconfig defaults=(sdkconfig.defaults) suffix= ;;
 --dev) out=out-dev sdkconfig=out-dev/sdkconfig defaults=(sdkconfig.defaults sdkconfig.dev) suffix=-dev ;;
-*) die "usage: ./build [--dev]" 2 ;;
+'--dev --broken')
+    out=out-broken sdkconfig=out-broken/sdkconfig suffix=-broken-dev
+    defaults=(sdkconfig.defaults sdkconfig.dev sdkconfig.broken) ;;
+*) die "$usage" 2 ;;
 esac
-[ $# -le 1 ] || die "usage: ./build [--dev]" 2
 [ -f "$idf_path/export.sh" ] || die "no ESP-IDF in $idf_path (set IDF_PATH)" 2
 
 # export.sh puts idf.py and the compilers on the PATH; it is chatty, so only its errors are shown

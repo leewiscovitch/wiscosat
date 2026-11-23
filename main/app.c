@@ -4,6 +4,7 @@
 // (the USB device, the keyboard), usb_msc.c (the seed drive), wifi.c (the network), channel.c (TLS-PSK, the lines).
 // An unenrolled board (no settings in NVS) is a keyboard and a seed drive with no network.
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -15,6 +16,7 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "driver/gpio.h"
+#include "sdkconfig.h"
 #ifdef SAT_DEV
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
@@ -239,6 +241,7 @@ static cJSON *state_json(void)
     channel_state(s);
     arm_state(s);
     seed_state(s);
+    update_state(s);
     cJSON *a = cJSON_AddArrayToObject(s, "events");
     int n = nev;
     for (int i = 0; i < n; i++) {
@@ -282,18 +285,61 @@ static const char *do_type(const char *text)
     return NULL;
 }
 
-static const char *do_seed(const cmd_t *c, char *msg, size_t size)
+// restart 1 s after the answer (restart, and a finished update): the answer leaves first
+static void restart_now(void *arg) { esp_restart(); }
+
+static const char *restart_soon(void)
+{
+    static esp_timer_handle_t t;
+    const esp_timer_create_args_t args = {.callback = restart_now, .name = "restart"};
+    if (!t && esp_timer_create(&args, &t) != ESP_OK) return "restart: no timer";
+    if (esp_timer_start_once(t, 1000 * 1000) != ESP_OK) return "restart: already on its way";
+    ev("restart in 1 s");
+    return NULL;
+}
+
+// the raw bytes' end (raw_t): the final answer line
+static char *seed_done(const char *broke)
+{
+    const char *err = seed_end(broke);
+    return proto_answer(err, err ? NULL : state_json());
+}
+
+static const char *update_chunk_(const uint8_t *p, size_t n) { return update_chunk(p, n); }
+
+static char *update_done(const char *broke)
+{
+    const char *err = update_end(broke);
+    if (!err) err = restart_soon();
+    return proto_answer(err, err ? NULL : state_json());
+}
+
+#define READY "{\"ok\":true,\"ready\":true}"
+
+// seed and update: checked, then started; the answer says ready and *raw takes the bytes. NULL and *ready false:
+// done already (a wipe, a seed of only empty files). Else the error
+static const char *start_raw(const cmd_t *c, raw_t *raw, bool *ready, char *msg, size_t size)
 {
     const char *e;
     int bad = 0;
+    *ready = false;
+    if (c->kind == CMD_UPDATE) {
+        if ((e = update_begin(c->update.size, c->update.sha256))) return e;
+        *raw = (raw_t){c->update.size, update_chunk_, update_done};
+        *ready = true;
+        return NULL;
+    }
+    if (update_running()) return "an update is running";
+    if (!c->seed.n) return seed_wipe(c->seed.hold_ms);
     if (seedrules_check(c->seed.files, c->seed.n, seed_room(c->seed.n), &e, &bad)) {
         snprintf(msg, size, "seed refused, file \"%s\": %s", c->seed.files[bad].name, e);
         return msg;
     }
-    e = seed_write(c->seed.files, c->seed.n, c->seed.hold_ms);
-    if (!e) return NULL;
-    snprintf(msg, size, "seed: %s", e);
-    return msg;
+    if ((e = seed_begin(c->seed.files, c->seed.n, c->seed.hold_ms))) return e;
+    if (!c->seed.total) return seed_end(NULL); // only empty files: nothing follows the line
+    *raw = (raw_t){c->seed.total, seed_chunk, seed_done};
+    *ready = true;
+    return NULL;
 }
 
 static const char *run(const cmd_t *c, char *msg, size_t size)
@@ -308,10 +354,10 @@ static const char *run(const cmd_t *c, char *msg, size_t size)
     case CMD_PRESS: return kbd_hold(c->key.report, true);
     case CMD_RELEASE: return kbd_hold(c->key.name ? c->key.report : NULL, false);
     case CMD_TYPE: return do_type(c->type.text);
-    case CMD_SEED: return do_seed(c, msg, size);
-    case CMD_UPDATE:
-    case CMD_RESTART:
-    case CMD_IDENTIFY: return "not in this firmware yet";
+    case CMD_SEED:
+    case CMD_UPDATE: return "start_raw's"; // not reached: app_handle_line hands these to start_raw
+    case CMD_RESTART: return restart_soon();
+    case CMD_IDENTIFY: return led_identify();
 #ifdef SAT_DEV
     case CMD_DOWNLOAD: return do_download();
 #endif
@@ -319,19 +365,24 @@ static const char *run(const cmd_t *c, char *msg, size_t size)
     return "unknown command";
 }
 
-char *app_handle_line(const char *line, size_t len)
+char *app_handle_line(const char *line, size_t len, raw_t *raw)
 {
     cmd_t c;
     const char *err = NULL;
     char msg[160];
+    bool ready = false;
     if (!first_cmd_ms) first_cmd_ms = now_ms();
     if (proto_parse(line, len, &c, &err)) return proto_answer(err, NULL);
     const host_t h = {.configured = usb_configured(), .suspended = usb_suspended(), .firing = firing()};
     err = proto_check(&c, &h);
-    if (!err) err = run(&c, msg, sizeof(msg));
+    if (!err && (c.kind == CMD_SEED || c.kind == CMD_UPDATE)) err = start_raw(&c, raw, &ready, msg, sizeof(msg));
+    else if (!err) err = run(&c, msg, sizeof(msg));
     proto_free(&c);
+    if (ready) return strdup(READY);
     return proto_answer(err, err ? NULL : state_json());
 }
+
+void app_answered(void) { update_answered(); }
 
 void app_main(void)
 {
@@ -355,10 +406,17 @@ void app_main(void)
 
     // the network last, and only for an enrolled unit; nothing below waits for it
     enrolled = settings_load(&settings);
+#if CONFIG_SAT_BROKEN
+    // the rollback check's image (./build --dev --broken): a network no Wi-Fi has, so it never proves itself
+    strlcpy(settings.wifi_ssid, "no-such-network-rollback-test", sizeof(settings.wifi_ssid));
+    ev("broken build: wrong Wi-Fi name on purpose");
+#endif
     if (!enrolled) {
         ev("unenrolled: no network");
+        update_trial_start(); // it cannot prove itself: the old image comes back in 120 s
         return;
     }
     wifi_start(&settings);
     channel_start(&settings);
+    update_trial_start(); // after an update: this image keeps itself only once it has joined and answered
 }

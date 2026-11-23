@@ -9,4 +9,38 @@ config SAT_DEV
         with no buttons), says "dev": true in status, and its version ends in -dev. Only a unit kept for
         development runs one.
 
+config SAT_BROKEN
+    bool "A broken dev build, for the rollback check (a wrong Wi-Fi name over the settings)"
+    depends on SAT_DEV
+    default n
+    help
+        Made by ./build --dev --broken into out-broken/ (sdkconfig.broken sets this) and nowhere else. The image
+        joins a Wi-Fi of a name no network has, so after an update it cannot prove itself and the bootloader takes
+        the old image back 120 s after its start. A test of the rollback only.
+
+choice SAT_LED
+    prompt "The LED identify blinks"
+    default SAT_LED_APA102
+    help
+        identify blinks this LED for 5 s. none: identify answers "no led on this board".
+
+config SAT_LED_APA102
+    bool "A ring of APA102 LEDs (LilyGO T-Embed: 7, data GPIO 42, clock GPIO 45)"
+config SAT_LED_NONE
+    bool "none"
+endchoice
+
+config SAT_LED_APA102_DATA
+    int "APA102 data GPIO"
+    depends on SAT_LED_APA102
+    default 42
+config SAT_LED_APA102_CLOCK
+    int "APA102 clock GPIO"
+    depends on SAT_LED_APA102
+    default 45
+config SAT_LED_APA102_COUNT
+    int "APA102 LEDs in the chain"
+    depends on SAT_LED_APA102
+    default 7
+
 endmenu

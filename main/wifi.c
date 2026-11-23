@@ -69,6 +69,8 @@ void wifi_start(const settings_t *s)
     esp_wifi_set_ps(WIFI_PS_NONE);
 }
 
+bool wifi_ever_joined(void) { return joined_ms != 0; }
+
 void wifi_state(cJSON *st)
 {
     cJSON *w = cJSON_AddObjectToObject(st, "wifi");

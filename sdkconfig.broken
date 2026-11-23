@@ -1,0 +1,2 @@
+# The broken dev build: ./build --dev --broken reads it after sdkconfig.defaults and sdkconfig.dev (into out-broken/)
+CONFIG_SAT_BROKEN=y
