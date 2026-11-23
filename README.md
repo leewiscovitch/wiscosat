@@ -142,10 +142,32 @@ A seed that breaks off, cannot be written or reads back wrong leaves the volume 
 seed; the answer says so. The UNIT ATTENTION is answered in front of esp_tinyusb's own TEST UNIT READY by the
 linker's `--wrap` (`main/CMakeLists.txt`, `usb_msc.c`).
 
-Wear levelling's **performance** mode (one erase per 4 KB) was tried and dropped: a seed written over the files of an
-earlier one read back wrong (the read-back caught it every time; safe mode passed the same seeds twice in a row).
-Changing the mode also changes the partition's layout: a unit that ran another mode needs its seed partition erased
-once (`esptool erase_region 0x420000 0x100000`; the firmware formats it).
+### Reads and writes cut at the flash sectors (`wlfix.c`)
+
+ESP-IDF v5.5.6's wear levelling gets a read or write wrong that starts inside one 4096-byte flash sector and ends
+in the next. It keeps one spare flash sector that moves through the partition (one step every 16 erases), so two
+neighbouring sectors of the volume are not always neighbours in the flash; `WL_Flash::write` and `::read` work out
+where a piece starts and run straight on. When the spare sits right at that boundary, the end of the piece is
+written into the spare, and the place it belongs stays erased.
+
+The seed volume meets this: its clusters (4 KB) start at sector 97, one 512-byte sector into a flash sector, and
+FatFs writes a whole cluster in one call when the bytes are there. So a cluster's last sector could be lost
+whenever the spare stood behind its first seven. As seen (2026-11-23): a seed read back wrong about once in 19
+(three files, 81 KB), a 400 KB file on the third try; the file pulled from the drive had exactly two runs of 512
+bytes of `FFh`, each the last sector of a cluster (offset 3584 in its 4 KB), in two neighbouring clusters. The
+read-back caught every one and the drive was wiped, so no host got a wrong seed.
+
+`wlfix.c` cuts every `wl_read` and `wl_write` into pieces that stay inside one flash sector (`wlsplit.c` says
+where, pure and tested), in front of ESP-IDF's own by the linker's `--wrap` (`main/CMakeLists.txt`), so FatFs's
+and esp_tinyusb's calls are covered alike. ESP-IDF's master cuts the piece itself (`WL_Flash.cpp`: "an unaligned
+request crossing a page boundary must write its head separately"); once the pinned version has that, `wlfix.c`,
+`wlsplit.c` and the two `--wrap` can go.
+
+Wear levelling's **performance** mode (one erase per 4 KB) was tried before this was known and dropped: a seed
+written over the files of an earlier one read back wrong every time. Most likely the same fault (the spare moves
+differently there); not tried again with the fix, safe mode is fast enough. Changing the mode also changes the
+partition's layout: a unit that ran another mode needs its seed partition erased once
+(`esptool erase_region 0x420000 0x100000`; the firmware formats it).
 
 ## Updates
 
@@ -186,7 +208,9 @@ with nothing plugged in; a seed refused whole, with the file it is about; a seed
 written) and its end (bytes short, another SHA-256); the new image's trial (proven only with the Wi-Fi joined and a
 command answered, rolled back at 120 s); the lockout (4 failures fine, the fifth
 60 s, then 120 s, up to 900 s, across the clock's wrap); a unit's settings (an address `192.0.2.999` or none:
-unenrolled); the USB serial number made from the MAC (`dc da 0c 52 37 38` → `dcda0c523738`).
+unenrolled); the USB serial number made from the MAC (`dc da 0c 52 37 38` → `dcda0c523738`); a read or write on the
+seed partition cut at every flash sector's boundary (4096 bytes from offset 512: 3584 first; 81,000 bytes from
+sector 97: 20 pieces, none over a boundary).
 
 ## Layout
 
@@ -200,6 +224,7 @@ unenrolled); the USB serial number made from the MAC (`dc da 0c 52 37 38` → `d
 | `main/usb_kbd.c` | the USB device (both interfaces' descriptors, TinyUSB) and the keyboard: tap, press and release; a report the host has not taken within 50 ms is given up |
 | `main/usbserial.{c,h}` | pure: the USB serial number, the unit's MAC as 12 lower-case hex digits |
 | `main/usb_msc.c` | the seed drive: the FAT partition, shown to the host read-only, taken away while a seed is written, its bytes streamed in and read back; the UNIT ATTENTION as it comes back |
+| `main/wlfix.c`, `main/wlsplit.{c,h}` | every wear-levelled read and write cut at the flash sectors' boundaries (ESP-IDF v5.5.6 gets one that crosses wrong, "The seed"); `wlsplit` is the pure part |
 | `main/update.c` | the update: the other slot, the SHA-256, the trial and the rollback |
 | `main/updrules.{c,h}` | pure: what an update may do (its size, one at a time, its end) and the new image's trial |
 | `main/led.c` | `identify`: the board's LED (Kconfig `SAT_LED`) |

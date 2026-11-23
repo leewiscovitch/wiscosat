@@ -34,3 +34,4 @@ void test_updrules(void);
 void test_lockout(void);
 void test_settings(void);
 void test_usbserial(void);
+void test_wlsplit(void);
