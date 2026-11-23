@@ -26,7 +26,7 @@ void usb_start(void);
 bool usb_configured(void);
 bool usb_suspended(void);
 uint32_t usb_last_configured_ms(void);
-const char *kbd_tap(const uint8_t report[8]);                // down, 30 ms, up; NULL when the host took both
+const char *kbd_tap(const uint8_t report[8]);                // down (with what is held), 30 ms, back to what is held
 const char *kbd_hold(const uint8_t report[8], bool press);   // add to or take from what is held; release NULL: all
 void kbd_state(cJSON *s);
 

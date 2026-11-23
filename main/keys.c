@@ -117,3 +117,18 @@ int keys_parse(const char *name, uint8_t report[8], const char **err)
     }
     return 0;
 }
+
+int keys_merge(const uint8_t held[8], const uint8_t tap[8], uint8_t out[8])
+{
+    uint8_t r[8] = {(uint8_t)(held[0] | tap[0]), 0};
+    int n = 2, lost = 0;
+    for (int i = 2; i < 8; i++)
+        if (held[i]) r[n++] = held[i];
+    for (int i = 2; i < 8; i++) {
+        if (!tap[i] || memchr(r + 2, tap[i], (size_t)(n - 2))) continue;
+        if (n < 8) r[n++] = tap[i];
+        else lost++;
+    }
+    memcpy(out, r, 8);
+    return lost;
+}

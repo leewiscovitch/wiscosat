@@ -12,3 +12,7 @@ int keys_parse(const char *name, uint8_t report[8], const char **err);
 
 // one character on the US layout (with shift where it needs it); -1 for a character it has no key for
 int keys_type(char c, uint8_t report[8]);
+
+// held and tap together, as a tap sends them while keys are held (`press`): the modifiers of both; held's keys, then
+// tap's keys not already there, up to six. Returns how many of tap's keys found no room (0: all in).
+int keys_merge(const uint8_t held[8], const uint8_t tap[8], uint8_t out[8]);

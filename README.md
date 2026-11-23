@@ -255,7 +255,7 @@ the next start boots), `wifi`, `channel`.
 | `status` | | the state |
 | `key` | `name`; `when`: `now` (default) or `configured`; for `configured`: `every_ms` (20..5000, default 100), `for_ms` (0..30000, default 3000; 0 once), `persist` | now: down and up at once (`"no host"` when no host has configured the unit: nothing is queued). `configured`: armed, sent by the unit itself from the host's next configuration (a PC's firmware configures at every start) |
 | `disarm` | | the armed key goes |
-| `press`, `release` | `name` (`release` without it: everything up) | hold keys down, let them go |
+| `press`, `release` | `name` (`release` without it: everything up) | hold keys down, let them go; a `key` or `type` meanwhile carries what is held (`press ctrl`, `key c`: Ctrl+C) and goes back to it after; at most six keys at once |
 | `type` | `text` | typed on the US layout; refused whole if a character has no key |
 | `seed` | `files` (`[{"name":"user-data","size":N,"sha256":"<64 hex>"},...]`), `hold_ms` (0..10000, default 2000) | `ready`, then the files' bytes raw (above); the drive's files replaced, read back, given back as a media change ("The seed"). No files: the drive wiped (no bytes follow). At most 8 files, names up to 60 characters, all within the drive; else refused whole before any byte, the old seed untouched, the error naming the file |
 | `update` | `size` (1.. the slot), `sha256` | `ready`, then `size` bytes raw; the final answer, then a restart into the new slot 1 s later ("Updates") |

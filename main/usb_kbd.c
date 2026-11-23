@@ -7,6 +7,7 @@
 #include "tinyusb.h"
 #include "class/hid/hid_device.h"
 #include "esp_mac.h"
+#include "keys.h"
 #include "sat.h"
 #include "usbserial.h"
 
@@ -129,22 +130,29 @@ static const char *no_host(void)
     return NULL;
 }
 
-// modifiers down, then all keys down together, 30 ms, then a report with everything up
-const char *kbd_tap(const uint8_t report[8])
+// modifiers down, then all keys down together, 30 ms, then back to what is held (press): everything else up.
+// A tap while keys are held carries them, as a key pressed on a keyboard with ctrl held down does
+const char *kbd_tap(const uint8_t tap[8])
 {
-    static const uint8_t none[8] = {0};
     const char *e = no_host();
     if (e) return e;
     xSemaphoreTake(key_lock, portMAX_DELAY);
+    uint8_t report[8];
+    if (keys_merge(held, tap, report)) {
+        xSemaphoreGive(key_lock);
+        return "too many keys held for this one (six at most)";
+    }
     bool ok = true;
-    if (report[0] && report[2]) { // modifiers first, as a person does
-        const uint8_t mods[8] = {report[0]};
+    if (report[0] != held[0] && report[2]) { // modifiers first, as a person does
+        uint8_t mods[8];
+        memcpy(mods, held, 8);
+        mods[0] = report[0];
         ok = send_report(mods);
         vTaskDelay(pdMS_TO_TICKS(20));
     }
     ok = ok && send_report(report);
     vTaskDelay(pdMS_TO_TICKS(30));
-    bool up = send_report(none);
+    bool up = send_report(held);
     vTaskDelay(pdMS_TO_TICKS(20));
     up = up && ready_within(GIVE_UP_MS); // the all-up report must really have been collected by the host
     xSemaphoreGive(key_lock);
@@ -159,16 +167,8 @@ const char *kbd_hold(const uint8_t report[8], bool press)
     const char *e = no_host();
     if (e) return e;
     xSemaphoreTake(key_lock, portMAX_DELAY);
-    if (press) {
-        held[0] |= report[0];
-        for (int i = 2; i < 8 && report[i]; i++) {
-            bool have = false;
-            int j;
-            for (j = 2; j < 8 && held[j]; j++)
-                if (held[j] == report[i]) have = true;
-            if (!have && j < 8) held[j] = report[i];
-        }
-    } else if (!report) memset(held, 0, sizeof(held));
+    if (press) keys_merge(held, report, held); // a key past the sixth is not held (as before)
+    else if (!report) memset(held, 0, sizeof(held));
     else {
         uint8_t left[8] = {held[0] & ~report[0]};
         int n = 2;
