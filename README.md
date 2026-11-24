@@ -265,12 +265,14 @@ the next start boots), `wifi`, `channel`.
 | Command | Fields | What |
 |---|---|---|
 | `status` | | the state |
-| `key` | `name`; `when`: `now` (default) or `configured`; for `configured`: `every_ms` (20..5000, default 100), `for_ms` (0..30000, default 3000; 0 once), `persist` | now: down and up at once (`"no host"` when no host has configured the unit: nothing is queued). `configured`: armed, sent by the unit itself from the host's next configuration (a PC's firmware configures at every start) |
+| `key` | `name`; `when`: `now` (default) or `configured`; for `configured`: `every_ms` (20..5000, default 100), `for_ms` (0..60000, default 3000; 0 once), `persist`, `sticky` | now: down and up at once (`"no host"` when no host has configured the unit: nothing is queued). `configured`: armed, sent by the unit itself from the host's next configuration (a PC's firmware configures at every start). `persist`: kept in NVS through the unit's own power cut, erased once fired. `sticky` (implies `persist`): armed again after each firing, for every later start, until `disarm` or a press of the knob; `status`'s `armed` shows it and `from` (`command`, `knob`) |
 | `disarm` | | the armed key goes |
 | `press`, `release` | `name` (`release` without it: everything up) | hold keys down, let them go; a `key` or `type` meanwhile carries what is held (`press ctrl`, `key c`: Ctrl+C) and goes back to it after; at most six keys at once |
 | `type` | `text` | typed on the US layout; refused whole if a character has no key |
 | `seed` | `files` (`[{"name":"user-data","size":N,"sha256":"<64 hex>"},...]`), `hold_ms` (0..10000, default 2000) | `ready`, then the files' bytes raw (above); the drive's files replaced, read back, given back as a media change ("The seed"). No files: the drive wiped (no bytes follow). At most 8 files, names up to 60 characters, all within the drive; else refused whole before any byte, the old seed untouched, the error naming the file |
 | `update` | `size` (1.. the slot), `sha256` | `ready`, then `size` bytes raw; the final answer, then a restart into the new slot 1 s later ("Updates") |
+| `wake` | | a sleeping (suspended) host woken by USB remote wake-up; refused with `no host`, `the host is not asleep`, or `the host did not allow this unit to wake it` (the host has not enabled remote wake-up for it) |
+| `menu` | `text` (optional) | the knob's menu ("The knob"). No `text`: the state with `menu` holding the text in use. A `text`: checked whole, then kept (NVS) and used; a bad one changes nothing and is refused with its line (`menu line 2: "f13" is no key, ...`). `""`: back to the built-in list. In `status`, `menu` has `source` (`text`, `built-in`), `entries`, `menus`, and `fault` when a stored text was not readable by this firmware; only on a board with a knob |
 | `restart` | | answered, then restarted 1 s later (the host sees the USB device go and come back) |
 | `identify` | | the LED blinks for 5 s (T-Embed: its ring of 7 APA102); a board with none: `no led on this board` |
 | `download` | | a dev build only: answers `ok` with the state, then 300 ms later restarts into the ROM's download mode over the USB the app was using, USB-OTG (the unit shows as `303a:0009`, "ESP32-S3", serial number its MAC with colons: a serial port for `esptool`; not `303a:1001`, the USB-Serial/JTAG of BOOT held at reset); no keyboard, no drive, no network until it is flashed (`--after watchdog_reset` starts the app; esptool 4.8 or later) or replugged. The ROM resets its USB when `esptool` lets go, so a second `esptool` call waits for the port to come back. A release build answers `unknown command` |
@@ -280,6 +282,33 @@ The trial's `bootloader` command is gone (`unknown command`); updates over Wi-Fi
 left empty (the trial wrote two placeholder files), so a wipe survives a restart. The volume is labelled `CIDATA`
 while it holds files and **`EMPTY` with none**: a wiped seed is no cloud-init seed, so a host's NoCloud never reads it
 in place of a real `CIDATA` drive plugged in beside it (with two, which one is read is the device order's).
+
+## The knob
+
+On a board with one (Kconfig `SAT_KNOB`: the LilyGO T-Embed's rotary encoder and its button): for a unit used by
+itself, away from its network, with its screen.
+
+- **Turn:** a list on the screen. **Press** on a key (F1-F12, Delete, Enter, Esc in the built-in list): armed sticky
+  (`Armed: f2`), nothing sent into what runs now; the unit sends it from the computer's next start, every 100 ms for
+  up to 60 s, ending 10 s after the host took the first, and at every later start, until a press takes it away.
+  Press on a combination: sent once, now. An entry of kind `hold` (Alt-SysRq s, u, b: restarts with no question)
+  wants the knob held 2 s
+- **Double press** (two within 350 ms; a single press therefore acts a third of a second late): the next menu. With
+  no menu on the screen a press only takes away what is armed or being sent; the menu goes after 10 s untouched
+- **The list is a text** (`main/menu.h` has the whole form), set by the command `menu`:
+  ```
+  # one entry a line: <label> | arm|send|hold | <keys>; [Name] starts a menu; # a comment
+  [Keys]
+  Setup | arm | f2
+  Boot menu | arm | f9
+  [Power]
+  Restart | send | ctrl-alt-del
+  Restart SysRq | hold | alt-sysrq-s 2000ms alt-sysrq-u 2000ms alt-sysrq-b
+  Wake | send | wake
+  ```
+  Labels 1 to 20 characters of the screen's font (letters, digits, space, `- . : _ / ?`); `send` and `hold` take up
+  to 12 keys, 100 ms apart, with a wait (`500ms`, 1 to 10000) where one is needed, and the word `wake`; up to 8
+  menus, 40 entries, 4096 bytes. With no text of its own the unit uses `menu_builtin` (`main/menu.c`)
 
 ## Licence
 
