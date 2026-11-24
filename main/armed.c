@@ -14,6 +14,8 @@ void armed_set(armed_t *a, const uint8_t report[8], uint32_t every_ms, uint32_t 
     a->armed = true;
 }
 
+void armed_end_after_taken(armed_t *a, uint32_t after_taken_ms) { a->after_taken_ms = after_taken_ms; }
+
 void armed_clear(armed_t *a) { a->armed = false; }
 
 void armed_configured(armed_t *a, uint32_t now_ms)
@@ -35,12 +37,26 @@ static void end(armed_t *a, uint32_t now_ms)
     a->end_ms = now_ms;
 }
 
+void armed_stop(armed_t *a, uint32_t now_ms)
+{
+    if (a->firing) end(a, now_ms);
+}
+
+void armed_rearm(armed_t *a)
+{
+    if (!a->firing) a->armed = true;
+}
+
 bool armed_due(armed_t *a, uint32_t now_ms)
 {
     if (!a->firing) return false;
     uint32_t since = now_ms - a->configured_ms;
     if (since >= 0x80000000u) return false; // before the start (a clock read just ahead of armed_configured)
     if (since < a->slot * a->every_ms) return false;
+    if (a->after_taken_ms && a->taken && now_ms - a->first_taken_ms >= a->after_taken_ms) {
+        end(a, now_ms);
+        return false;
+    }
     uint32_t current = since / a->every_ms; // the slot now; later than a->slot when slots were missed
     if (current >= slots(a)) {
         end(a, now_ms);

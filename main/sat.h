@@ -55,7 +55,19 @@ bool update_running(void);
 // led.c: identify; NULL when the board's LED blinks, else why not ("no led")
 const char *led_identify(void);
 
-// screen.c: the name, large, and two small lines below, drawn once in a task of its own (none: nothing)
+// app.c, for the knob: the idle picture again; a key armed to stay; what is armed or being sent taken away (true:
+// there was something); a key or combination now. The const char *: NULL done, else why not
+void app_ui_refresh(void);
+const char *app_ui_arm(const char *name);
+bool app_ui_disarm(void);
+const char *app_ui_tap(const char *name);
+
+// knob.c: the board's knob picks a key to arm or a combination to send (none: nothing)
+void knob_start(void);
+bool knob_present(void);
+bool knob_browsing(void); // its menu has the screen
+
+// screen.c: one line large and two small lines below, drawn in a task of its own, again at every call (none: nothing)
 void screen_show(const char *name, const char *line2, const char *line3);
 
 // wifi.c: the network at the unit's fixed address, reconnecting with back-off

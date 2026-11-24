@@ -44,6 +44,7 @@ typedef struct {
         when_t when;                // key only
         uint32_t every_ms, for_ms;  // key when configured: the armed key's schedule (defaults filled in)
         bool persist;               // key when configured: kept in flash until it has fired
+        bool sticky;                // key when configured: kept (in flash too) and sent at every start until disarmed
     } key;
     struct {
         const char *text; // every character checked to have a key on the US layout

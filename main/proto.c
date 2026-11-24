@@ -60,6 +60,8 @@ static const char *parse_key(const cJSON *req, cmd_t *c)
         return err;
     if ((err = whole(req, "for_ms", 0, ARMED_FOR_MS_MAX, ARMED_FOR_MS_DEFAULT, &c->key.for_ms))) return err;
     c->key.persist = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(req, "persist"));
+    c->key.sticky = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(req, "sticky"));
+    if (c->key.sticky) c->key.persist = true;
     return NULL;
 }
 

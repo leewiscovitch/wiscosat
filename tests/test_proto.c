@@ -85,16 +85,16 @@ static void test_key(void)
     CHECK(parse("{\"cmd\":\"key\",\"name\":\"f9\",\"when\":\"configured\"}", &c) == NULL);
     CHECK(c.key.when == WHEN_CONFIGURED && c.key.every_ms == 100 && c.key.for_ms == 3000 && !c.key.persist);
     proto_free(&c);
-    CHECK(parse("{\"cmd\":\"key\",\"name\":\"f9\",\"when\":\"configured\",\"every_ms\":20,\"for_ms\":30000,"
+    CHECK(parse("{\"cmd\":\"key\",\"name\":\"f9\",\"when\":\"configured\",\"every_ms\":20,\"for_ms\":60000,"
                 "\"persist\":true}", &c) == NULL);
-    CHECK(c.key.every_ms == 20 && c.key.for_ms == 30000 && c.key.persist);
+    CHECK(c.key.every_ms == 20 && c.key.for_ms == 60000 && c.key.persist);
     proto_free(&c);
     CHECK(parse("{\"cmd\":\"key\",\"name\":\"f9\",\"when\":\"configured\",\"every_ms\":5000,\"for_ms\":0}", &c) == NULL);
     proto_free(&c);
 
     CHECK_HAS(parse_free("{\"cmd\":\"key\",\"name\":\"f9\",\"when\":\"configured\",\"every_ms\":19}"), "every_ms");
     CHECK_HAS(parse_free("{\"cmd\":\"key\",\"name\":\"f9\",\"when\":\"configured\",\"every_ms\":5001}"), "every_ms");
-    CHECK_HAS(parse_free("{\"cmd\":\"key\",\"name\":\"f9\",\"when\":\"configured\",\"for_ms\":30001}"), "for_ms");
+    CHECK_HAS(parse_free("{\"cmd\":\"key\",\"name\":\"f9\",\"when\":\"configured\",\"for_ms\":60001}"), "for_ms");
     CHECK_HAS(parse_free("{\"cmd\":\"key\",\"name\":\"f9\",\"when\":\"configured\",\"for_ms\":-1}"), "for_ms");
     CHECK_HAS(parse_free("{\"cmd\":\"key\",\"name\":\"f9\",\"when\":\"configured\",\"for_ms\":\"3000\"}"), "for_ms");
     CHECK_HAS(parse_free("{\"cmd\":\"key\",\"name\":\"f9\",\"when\":\"configured\",\"every_ms\":100.5}"), "every_ms");

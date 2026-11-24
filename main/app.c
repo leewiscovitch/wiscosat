@@ -61,11 +61,13 @@ static bool enrolled;
 
 // ---------- the armed key ----------
 // With "persist" it is kept in NVS so it survives the unit's own power cut (a cold start of the target), and
-// erased once it has fired.
+// erased once it has fired. With "sticky" (the knob's keys; the command's option) it is not erased: when its firing
+// has ended it is armed again, for every later start, until a press of the knob or disarm takes it away.
 typedef struct {
     uint8_t report[8];
     char name[KEYS_NAME_MAX + 1];
-    uint16_t every_ms, for_ms;
+    uint16_t every_ms, for_ms, after_taken_ms;
+    uint8_t sticky;
 } arm_rec_t;
 static SemaphoreHandle_t arm_lock;
 static armed_t arm;               // under arm_lock
@@ -78,6 +80,7 @@ static struct {
     const char *last_error;
 } fire; // what armed_t does not count: why a report was not taken
 static TaskHandle_t armer_h;
+static void ui_refresh(void);
 
 static void arm_save(bool keep)
 {
@@ -98,11 +101,12 @@ static void arm_load(void)
     if (nvs_get_blob(h, "arm", &arm_rec, &len) == ESP_OK && len == sizeof(arm_rec)) {
         arm_rec.name[KEYS_NAME_MAX] = 0;
         armed_set(&arm, arm_rec.report, arm_rec.every_ms, arm_rec.for_ms);
+        armed_end_after_taken(&arm, arm_rec.after_taken_ms);
         arm_persist = true;
         armed_at_ms = now_ms();
         armed_from = "flash";
         ev("armed key loaded from flash");
-    }
+    } else memset(&arm_rec, 0, sizeof(arm_rec));
     nvs_close(h);
 }
 
@@ -132,6 +136,7 @@ static void armer_task(void *arg)
         if (!go) continue;
         memset(&fire, 0, sizeof(fire));
         ev("armed key firing");
+        ui_refresh();
         for (;;) {
             xSemaphoreTake(arm_lock, portMAX_DELAY);
             uint32_t wait = armed_wait_ms(&arm, now_ms());
@@ -149,34 +154,97 @@ static void armer_task(void *arg)
             armed_result(&arm, e == NULL);
             xSemaphoreGive(arm_lock);
         }
-        if (persist) arm_save(false); // fired: erased from flash
-        ev("armed key done");
+        xSemaphoreTake(arm_lock, portMAX_DELAY);
+        bool again = arm_rec.sticky; // a disarm on the way took it
+        if (again) armed_rearm(&arm);
+        xSemaphoreGive(arm_lock);
+        if (persist && !again) arm_save(false); // fired: erased from flash
+        ev(again ? "armed key done, armed again (sticky)" : "armed key done");
+        ui_refresh();
     }
 }
 
-static void do_arm(const cmd_t *c)
+static void arm_key(const uint8_t report[8], const char *name, uint32_t every_ms, uint32_t for_ms,
+                    uint32_t after_taken_ms, bool persist, bool sticky, const char *from)
 {
     xSemaphoreTake(arm_lock, portMAX_DELAY);
-    armed_set(&arm, c->key.report, c->key.every_ms, c->key.for_ms);
-    memcpy(arm_rec.report, c->key.report, 8);
-    strlcpy(arm_rec.name, c->key.name, sizeof(arm_rec.name));
-    arm_rec.every_ms = c->key.every_ms;
-    arm_rec.for_ms = c->key.for_ms;
-    arm_persist = c->key.persist;
+    armed_set(&arm, report, every_ms, for_ms);
+    armed_end_after_taken(&arm, after_taken_ms);
+    arm_rec.after_taken_ms = after_taken_ms;
+    memcpy(arm_rec.report, report, 8);
+    strlcpy(arm_rec.name, name, sizeof(arm_rec.name));
+    arm_rec.every_ms = every_ms;
+    arm_rec.for_ms = for_ms;
+    arm_rec.sticky = sticky;
+    arm_persist = persist || sticky;
     armed_at_ms = now_ms();
-    armed_from = "command";
+    armed_from = from;
     xSemaphoreGive(arm_lock);
-    arm_save(c->key.persist);
+    arm_save(persist || sticky);
     ev("key armed for next configured");
+    ui_refresh();
 }
 
-static void do_disarm(void)
+// true when there was something to take away: an armed key, or one being sent (stopped at once)
+static bool do_disarm(void)
 {
     xSemaphoreTake(arm_lock, portMAX_DELAY);
+    bool was = arm.armed || arm.firing;
     armed_clear(&arm);
+    armed_stop(&arm, now_ms());
+    arm_rec.sticky = 0;
     xSemaphoreGive(arm_lock);
     arm_save(false);
-    ev("disarmed");
+    if (was) ev("disarmed");
+    ui_refresh();
+    return was;
+}
+
+// ---------- the screen and the knob ----------
+static const char *ui_version = "";
+static volatile bool ui_ready; // app_main has drawn the first picture (it starts the screen's task)
+
+// the idle picture: who the unit is; with a key armed or being sent, that key first
+static void ui_refresh(void)
+{
+    if (!ui_ready || knob_browsing()) return; // the menu has the screen; it calls app_ui_refresh when it lets go
+    char big[40], id[64];
+    xSemaphoreTake(arm_lock, portMAX_DELAY);
+    bool armed = arm.armed, sending = arm.firing;
+    snprintf(big, sizeof(big), "%s %.20s", sending ? "Sending" : "Armed:", arm_rec.name);
+    xSemaphoreGive(arm_lock);
+    const char *name = enrolled ? settings.name : "unenrolled";
+    if (!armed && !sending) return screen_show(name, enrolled ? settings.ip_str : "", ui_version);
+    snprintf(id, sizeof(id), "%s  %s", name, enrolled ? settings.ip_str : "");
+    screen_show(big, knob_present() ? (sending ? "press to stop" : "press to clear") : "", id);
+}
+
+void app_ui_refresh(void) { ui_refresh(); }
+
+// the knob's key: sent every 100 ms at every start from now on, until taken away. It stops 10 s after the host took
+// the first one (a firmware has seen its key by then); with no host taking any, after 60 s
+#define KNOB_AFTER_TAKEN_MS 10000
+const char *app_ui_arm(const char *name)
+{
+    uint8_t report[8];
+    const char *err = NULL;
+    if (keys_parse(name, report, &err)) return err;
+    if (firing()) do_disarm();
+    arm_key(report, name, ARMED_EVERY_MS_DEFAULT, ARMED_FOR_MS_MAX, KNOB_AFTER_TAKEN_MS, true, true, "knob");
+    return NULL;
+}
+
+bool app_ui_disarm(void) { return do_disarm(); }
+
+// one key or combination now, from the knob
+const char *app_ui_tap(const char *name)
+{
+    uint8_t report[8];
+    const char *err = NULL;
+    if (keys_parse(name, report, &err)) return err;
+    if (!usb_configured()) return "no host";
+    ev("knob: a key sent");
+    return kbd_tap(report);
 }
 
 // ---------- status ----------
@@ -203,7 +271,9 @@ static void arm_state(cJSON *s)
         cJSON_AddStringToObject(j, "name", arm_rec.name);
         cJSON_AddNumberToObject(j, "every_ms", a.every_ms);
         cJSON_AddNumberToObject(j, "for_ms", a.for_ms);
+        if (a.after_taken_ms) cJSON_AddNumberToObject(j, "after_taken_ms", a.after_taken_ms);
         cJSON_AddBoolToObject(j, "persist", arm_persist);
+        cJSON_AddBoolToObject(j, "sticky", arm_rec.sticky);
         cJSON_AddNumberToObject(j, "armed_at_ms", armed_at_ms);
         cJSON_AddStringToObject(j, "from", armed_from);
     } else cJSON_AddNullToObject(s, "armed");
@@ -348,7 +418,8 @@ static const char *run(const cmd_t *c, char *msg, size_t size)
     case CMD_STATUS: return NULL;
     case CMD_KEY:
         if (c->key.when == WHEN_NOW) return kbd_tap(c->key.report);
-        do_arm(c);
+        arm_key(c->key.report, c->key.name, c->key.every_ms, c->key.for_ms, 0, c->key.persist, c->key.sticky,
+                "command");
         return NULL;
     case CMD_DISARM: do_disarm(); return NULL;
     case CMD_PRESS: return kbd_hold(c->key.report, true);
@@ -411,8 +482,10 @@ void app_main(void)
     strlcpy(settings.wifi_ssid, "no-such-network-rollback-test", sizeof(settings.wifi_ssid));
     ev("broken build: wrong Wi-Fi name on purpose");
 #endif
-    const char *version = esp_app_get_description()->version;
-    screen_show(enrolled ? settings.name : "unenrolled", enrolled ? settings.ip_str : "", version);
+    ui_version = esp_app_get_description()->version;
+    ui_ready = true;
+    ui_refresh();
+    knob_start(); // an unenrolled board too: the knob needs no network
     if (!enrolled) {
         ev("unenrolled: no network");
         update_trial_start(); // it cannot prove itself: the old image comes back in 120 s

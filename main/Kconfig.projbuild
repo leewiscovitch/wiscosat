@@ -102,4 +102,35 @@ config SAT_SCREEN_BRIGHTNESS
     range 1 100
     default 20
 
+choice SAT_KNOB
+    prompt "The knob that picks a key"
+    default SAT_KNOB_ENCODER
+    help
+        Turning walks a list on the screen (keys to arm for the next start, combinations to send now); a press
+        acts. none: a board with no knob.
+
+config SAT_KNOB_ENCODER
+    bool "A rotary encoder with a push button (LilyGO T-Embed: A GPIO 2, B GPIO 1, button GPIO 0)"
+    depends on SAT_SCREEN_ST7789
+config SAT_KNOB_NONE
+    bool "none"
+endchoice
+
+config SAT_KNOB_A
+    int "Encoder A GPIO"
+    depends on SAT_KNOB_ENCODER
+    default 2
+config SAT_KNOB_B
+    int "Encoder B GPIO"
+    depends on SAT_KNOB_ENCODER
+    default 1
+config SAT_KNOB_BUTTON
+    int "Encoder button GPIO (low when pressed)"
+    depends on SAT_KNOB_ENCODER
+    default 0
+config SAT_KNOB_REVERSE
+    bool "Turn the list the other way"
+    depends on SAT_KNOB_ENCODER
+    default n
+
 endmenu

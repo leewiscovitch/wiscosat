@@ -1,10 +1,13 @@
 // The board's screen shows the unit's name, large, and its address and version below, so a person tells units
 // apart at a glance. Which screen is a build choice (Kconfig SAT_SCREEN): an ST7789 on SPI (the LilyGO T-Embed's,
-// 320x170, on the rail GPIO 46 keeps on, app.c), or none. Drawn once, in a task of its own at a low priority, after
-// USB has started: the keyboard never waits for the screen. The backlight is dim by default (SAT_SCREEN_BRIGHTNESS).
+// 320x170, on the rail GPIO 46 keeps on, app.c), or none. Drawn in a task of its own at a low priority, after USB has
+// started: the keyboard never waits for the screen. screen_show may be called again at any time, from any task: the
+// newest text replaces the picture (an armed key, the knob's menu; app.c, knob.c). Only a change is drawn, nothing
+// ticks. The backlight is dim by default (SAT_SCREEN_BRIGHTNESS).
 #include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
@@ -35,7 +38,10 @@ typedef struct {
 } screen_text_t;
 
 static uint8_t *canvas; // W*H, one byte a pixel: 0 none, 1 the name's ink, 2 the small lines'
+static uint16_t *strip;
 static SemaphoreHandle_t sent;
+static esp_lcd_panel_handle_t panel;
+static QueueHandle_t texts; // one place: the newest text wins
 
 static int text_width(const char *s, int scale)
 {
@@ -89,17 +95,16 @@ static void backlight(int percent)
     if (ledc_timer_config(&tc) != ESP_OK || ledc_channel_config(&cc) != ESP_OK) ev("screen: no backlight");
 }
 
-static const char *draw(const screen_text_t *t)
+// once: the panel, dark until the first picture is whole (no garbage from its RAM)
+static const char *init(void)
 {
-    // the backlight off until the picture is whole: no garbage from the panel's RAM
     gpio_set_direction(CONFIG_SAT_SCREEN_BL, GPIO_MODE_OUTPUT);
     gpio_set_level(CONFIG_SAT_SCREEN_BL, 0);
 
-    canvas = calloc(W * H, 1);
-    uint16_t *strip = heap_caps_malloc(W * STRIP * 2, MALLOC_CAP_DMA);
+    canvas = malloc(W * H);
+    strip = heap_caps_malloc(W * STRIP * 2, MALLOC_CAP_DMA);
     sent = xSemaphoreCreateBinary();
     if (!canvas || !strip || !sent) return "screen: no memory";
-    layout(t);
 
     spi_bus_config_t bus = {.mosi_io_num = CONFIG_SAT_SCREEN_MOSI, .sclk_io_num = CONFIG_SAT_SCREEN_SCLK,
                             .miso_io_num = -1, .quadwp_io_num = -1, .quadhd_io_num = -1,
@@ -110,7 +115,6 @@ static const char *draw(const screen_text_t *t)
                                          .pclk_hz = 40 * 1000 * 1000, .lcd_cmd_bits = 8, .lcd_param_bits = 8,
                                          .spi_mode = 0, .trans_queue_depth = 4, .on_color_trans_done = on_sent};
     if (esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST, &ioc, &io) != ESP_OK) return "screen: no io";
-    esp_lcd_panel_handle_t panel;
     esp_lcd_panel_dev_config_t pc = {.reset_gpio_num = CONFIG_SAT_SCREEN_RST,
                                      .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB, .bits_per_pixel = 16};
     if (esp_lcd_new_panel_st7789(io, &pc, &panel) != ESP_OK) return "screen: no panel";
@@ -124,7 +128,13 @@ static const char *draw(const screen_text_t *t)
     esp_lcd_panel_mirror(panel, false, true);
 #endif
     esp_lcd_panel_set_gap(panel, 0, CONFIG_SAT_SCREEN_GAP);
+    return NULL;
+}
 
+static const char *draw(const screen_text_t *t)
+{
+    memset(canvas, 0, W * H);
+    layout(t);
     for (int y = 0; y < H; y += STRIP) {
         int rows = H - y < STRIP ? H - y : STRIP;
         for (int i = 0; i < W * rows; i++) {
@@ -135,34 +145,40 @@ static const char *draw(const screen_text_t *t)
         if (esp_lcd_panel_draw_bitmap(panel, 0, y, W, y + rows, strip) != ESP_OK) return "screen: draw failed";
         xSemaphoreTake(sent, portMAX_DELAY); // the strip is free again
     }
-    esp_lcd_panel_disp_on_off(panel, true);
-    free(canvas);
-    canvas = NULL;
-    heap_caps_free(strip);
-    backlight(CONFIG_SAT_SCREEN_BRIGHTNESS);
     return NULL;
 }
 
 static void screen_task(void *arg)
 {
-    screen_text_t *t = arg;
-    const char *e = draw(t);
-    if (e) ev(e);
-    free(t);
-    vTaskDelete(NULL);
+    screen_text_t t;
+    const char *e = init();
+    if (e) {
+        ev(e);
+        vTaskDelete(NULL);
+    }
+    for (bool lit = false;;) {
+        xQueueReceive(texts, &t, portMAX_DELAY);
+        if ((e = draw(&t))) ev(e);
+        if (lit) continue;
+        esp_lcd_panel_disp_on_off(panel, true);
+        backlight(CONFIG_SAT_SCREEN_BRIGHTNESS);
+        lit = true;
+    }
 }
 
+// the first call (app_main's, before anything else draws) starts the task
 void screen_show(const char *name, const char *line2, const char *line3)
 {
-    screen_text_t *t = calloc(1, sizeof(*t));
-    if (!t) return ev("screen: no memory");
-    strlcpy(t->line[0], name ? name : "", sizeof(t->line[0]));
-    strlcpy(t->line[1], line2 ? line2 : "", sizeof(t->line[1]));
-    strlcpy(t->line[2], line3 ? line3 : "", sizeof(t->line[2]));
-    if (xTaskCreate(screen_task, "screen", 4096, t, 2, NULL) != pdPASS) {
-        free(t);
-        ev("screen: no task");
+    screen_text_t t = {0};
+    strlcpy(t.line[0], name ? name : "", sizeof(t.line[0]));
+    strlcpy(t.line[1], line2 ? line2 : "", sizeof(t.line[1]));
+    strlcpy(t.line[2], line3 ? line3 : "", sizeof(t.line[2]));
+    if (!texts) {
+        texts = xQueueCreate(1, sizeof(screen_text_t));
+        if (!texts) return ev("screen: no memory");
+        if (xTaskCreate(screen_task, "screen", 4096, NULL, 2, NULL) != pdPASS) return ev("screen: no task");
     }
+    xQueueOverwrite(texts, &t);
 }
 #else
 void screen_show(const char *name, const char *line2, const char *line3)
