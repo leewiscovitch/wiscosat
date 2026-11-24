@@ -30,6 +30,7 @@ typedef enum {
     CMD_RESTART,
     CMD_IDENTIFY,
     CMD_MENU,
+    CMD_WAKE, // wake a sleeping host (USB remote wake-up)
 #ifdef SAT_DEV
     CMD_DOWNLOAD, // a dev build only (./build --dev): restart into the ROM's download mode, for esptool
 #endif

@@ -16,7 +16,7 @@ static const struct {
 } commands[] = {
     {"status", CMD_STATUS}, {"key", CMD_KEY},   {"disarm", CMD_DISARM}, {"press", CMD_PRESS},
     {"release", CMD_RELEASE}, {"type", CMD_TYPE}, {"seed", CMD_SEED},     {"update", CMD_UPDATE},
-    {"restart", CMD_RESTART}, {"identify", CMD_IDENTIFY}, {"menu", CMD_MENU},
+    {"restart", CMD_RESTART}, {"identify", CMD_IDENTIFY}, {"menu", CMD_MENU}, {"wake", CMD_WAKE},
 #ifdef SAT_DEV
     {"download", CMD_DOWNLOAD},
 #endif

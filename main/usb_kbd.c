@@ -32,7 +32,7 @@ static const tusb_desc_device_t dev_desc = {
     .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
     .idVendor = 0x303A,  // Espressif's
     .idProduct = 0x4006, // keyboard + seed drive
-    .bcdDevice = 0x0100,
+    .bcdDevice = 0x0101, // 0x0101: remote wake-up in the configuration (a host may keep the old one by this number)
     .iManufacturer = 1,
     .iProduct = 2,
     .iSerialNumber = 3,
@@ -41,7 +41,8 @@ static const tusb_desc_device_t dev_desc = {
 
 #define CFG_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + TUD_MSC_DESC_LEN)
 static const uint8_t cfg_desc[] = {
-    TUD_CONFIG_DESCRIPTOR(1, 2, 0, CFG_LEN, 0, 500),
+    // remote wake-up: the unit may wake a sleeping host (usb_wake), once the host has allowed it
+    TUD_CONFIG_DESCRIPTOR(1, 2, 0, CFG_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 500),
     // itf 0, string 4, boot protocol keyboard (macro sets subclass 1), EP 0x81 IN, 8 bytes, 10 ms
     TUD_HID_DESCRIPTOR(0, 4, HID_ITF_PROTOCOL_KEYBOARD, sizeof(report_desc), 0x81, 8, 10),
     // itf 1, string 5, mass storage (SCSI, bulk only), EP 0x02 OUT, EP 0x82 IN, 64 bytes
@@ -130,6 +131,21 @@ static const char *no_host(void)
     return NULL;
 }
 
+// wake a sleeping host: the resume signal on the bus (USB remote wake-up). A host takes it only when it allowed
+// this device to wake it before it went to sleep (Linux and Windows do for a keyboard, by default), and only on
+// a port that kept its power
+static volatile bool wake_allowed; // as the host said when it last suspended the bus
+void tud_suspend_cb(bool remote_wakeup_en) { wake_allowed = remote_wakeup_en; }
+
+const char *usb_wake(void)
+{
+    if (!tud_mounted()) return "no host";
+    if (!tud_suspended()) return "the host is not asleep";
+    if (!wake_allowed || !tud_remote_wakeup()) return "the host did not allow this unit to wake it";
+    ev("wake sent");
+    return NULL;
+}
+
 // modifiers down, then all keys down together, 30 ms, then back to what is held (press): everything else up.
 // A tap while keys are held carries them, as a key pressed on a keyboard with ctrl held down does
 const char *kbd_tap(const uint8_t tap[8])
@@ -189,6 +205,7 @@ void kbd_state(cJSON *s)
     cJSON_AddStringToObject(s, "target", listening ? "listening" : "not listening");
     cJSON_AddBoolToObject(s, "configured", tud_mounted());
     cJSON_AddBoolToObject(s, "suspended", tud_suspended());
+    if (tud_suspended()) cJSON_AddBoolToObject(s, "wake_allowed", wake_allowed);
     cJSON_AddStringToObject(s, "protocol", protocol < 0 ? "not set by host" : protocol == 0 ? "boot" : "report");
     cJSON_AddNumberToObject(s, "leds", leds);
     cJSON_AddNumberToObject(s, "keys_sent", keys_sent);

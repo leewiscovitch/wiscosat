@@ -319,11 +319,10 @@ static const char *menu_set(const char *text, char *msg, size_t size)
     return NULL;
 }
 
-int app_menu_entry(int i, menu_entry_t *out)
+int app_menu_view(int at, menu_view_t *out)
 {
     xSemaphoreTake(menu_lock, portMAX_DELAY);
-    int n = menu ? menu->n : 0;
-    if (out && i >= 0 && i < n) *out = menu->e[i];
+    int n = menu ? menu_view(menu, at, out) : 0;
     xSemaphoreGive(menu_lock);
     return n;
 }
@@ -335,6 +334,7 @@ static void menu_state(cJSON *s, bool with_text)
     xSemaphoreTake(menu_lock, portMAX_DELAY);
     cJSON_AddStringToObject(j, "source", menu_text ? "text" : "built-in");
     cJSON_AddNumberToObject(j, "entries", menu ? menu->n : 0);
+    cJSON_AddNumberToObject(j, "menus", menu ? menu->nsections : 0);
     if (menu_fault) cJSON_AddStringToObject(j, "fault", menu_fault);
     if (with_text) cJSON_AddStringToObject(j, "text", menu_text ? menu_text : menu_builtin);
     xSemaphoreGive(menu_lock);
@@ -525,6 +525,7 @@ static const char *run(const cmd_t *c, char *msg, size_t size)
     case CMD_UPDATE: return "start_raw's"; // not reached: app_handle_line hands these to start_raw
     case CMD_RESTART: return restart_soon();
     case CMD_IDENTIFY: return led_identify();
+    case CMD_WAKE: return usb_wake();
     case CMD_MENU:
         if (!knob_present()) return "no knob on this board";
         return c->menu.text ? menu_set(c->menu.text, msg, size) : NULL;

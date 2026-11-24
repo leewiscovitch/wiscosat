@@ -27,6 +27,7 @@ void usb_start(void);
 bool usb_configured(void);
 bool usb_suspended(void);
 uint32_t usb_last_configured_ms(void);
+const char *usb_wake(void);                                  // wake a sleeping host; NULL sent, else why not
 const char *kbd_tap(const uint8_t report[8]);                // down (with what is held), 30 ms, back to what is held
 const char *kbd_hold(const uint8_t report[8], bool press);   // add to or take from what is held; release NULL: all
 void kbd_state(cJSON *s);
@@ -62,8 +63,9 @@ void app_ui_refresh(void);
 const char *app_ui_arm(const char *name);
 bool app_ui_disarm(void);
 const char *app_ui_tap(const char *name);
-// the menu's i-th entry copied out (the menu can change under the knob: the command menu); how many there are
-int app_menu_entry(int i, menu_entry_t *out);
+// what the knob shows at entry at, copied out (the menu can change under the knob: the command menu); how many
+// entries there are
+int app_menu_view(int at, menu_view_t *out);
 
 // knob.c: the board's knob picks a key to arm or a combination to send (none: nothing)
 void knob_start(void);
