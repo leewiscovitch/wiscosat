@@ -24,6 +24,7 @@
 #include "cJSON.h"
 #include "armed.h"
 #include "keys.h"
+#include "menu.h"
 #include "proto.h"
 #include "sat.h"
 #include "settings.h"
@@ -247,6 +248,98 @@ const char *app_ui_tap(const char *name)
     return kbd_tap(report);
 }
 
+// ---------- the knob's menu ----------
+// The text the command menu gave is kept in NVS; with none, or one this firmware cannot read, the built-in list.
+static SemaphoreHandle_t menu_lock;
+static menu_t *menu;      // under menu_lock
+static char *menu_text;   // the stored text; NULL: the built-in list
+static const char *menu_fault; // why a stored text was not used
+
+static void menu_init(void)
+{
+    static char err[MENU_ERR_MAX]; // not on the main task's stack
+    nvs_handle_t h;
+    size_t len = 0;
+    menu_lock = xSemaphoreCreateMutex();
+    menu = calloc(1, sizeof(*menu));
+    if (!menu) return ev("menu: no memory");
+    if (nvs_open("sat", NVS_READONLY, &h) == ESP_OK) {
+        if (nvs_get_str(h, "menu", NULL, &len) == ESP_OK && len && len <= MENU_TEXT_MAX + 1 &&
+            (menu_text = malloc(len)) && nvs_get_str(h, "menu", menu_text, &len) != ESP_OK) {
+            free(menu_text);
+            menu_text = NULL;
+        }
+        nvs_close(h);
+    }
+    if (menu_text && menu_parse(menu_text, menu, err, sizeof(err))) {
+        ev("menu: the stored text is not readable, the built-in list");
+        menu_fault = "the stored text is not readable by this firmware";
+        free(menu_text);
+        menu_text = NULL;
+    }
+    if (!menu_text) menu_parse(menu_builtin, menu, err, sizeof(err));
+}
+
+// a new text ("": back to the built-in list): checked whole first, so a refused one changes nothing
+static const char *menu_set(const char *text, char *msg, size_t size)
+{
+    bool builtin = !text[strspn(text, " \t\r\n")];
+    menu_t *m = calloc(1, sizeof(*m));
+    char *copy = builtin ? NULL : strdup(text);
+    if (!m || (!builtin && !copy)) {
+        free(m), free(copy);
+        return "menu: no memory";
+    }
+    if (menu_parse(builtin ? menu_builtin : text, m, msg, size)) {
+        free(m), free(copy);
+        return msg;
+    }
+    nvs_handle_t h;
+    if (nvs_open("sat", NVS_READWRITE, &h) != ESP_OK) {
+        free(m), free(copy);
+        return "menu: the flash did not open";
+    }
+    esp_err_t e = builtin ? nvs_erase_key(h, "menu") : nvs_set_str(h, "menu", text);
+    if (e == ESP_ERR_NVS_NOT_FOUND) e = ESP_OK; // nothing was stored
+    if (e == ESP_OK) e = nvs_commit(h);
+    nvs_close(h);
+    if (e != ESP_OK) {
+        free(m), free(copy);
+        return "menu: not stored (the flash is full?)";
+    }
+    xSemaphoreTake(menu_lock, portMAX_DELAY);
+    menu_t *old = menu;
+    char *old_text = menu_text;
+    menu = m;
+    menu_text = copy;
+    menu_fault = NULL;
+    xSemaphoreGive(menu_lock);
+    free(old), free(old_text);
+    ev(builtin ? "menu: the built-in list" : "menu: a new text");
+    return NULL;
+}
+
+int app_menu_entry(int i, menu_entry_t *out)
+{
+    xSemaphoreTake(menu_lock, portMAX_DELAY);
+    int n = menu ? menu->n : 0;
+    if (out && i >= 0 && i < n) *out = menu->e[i];
+    xSemaphoreGive(menu_lock);
+    return n;
+}
+
+// into status: where the list is from and how long; with_text (the command menu's answer): the text itself
+static void menu_state(cJSON *s, bool with_text)
+{
+    cJSON *j = cJSON_AddObjectToObject(s, "menu");
+    xSemaphoreTake(menu_lock, portMAX_DELAY);
+    cJSON_AddStringToObject(j, "source", menu_text ? "text" : "built-in");
+    cJSON_AddNumberToObject(j, "entries", menu ? menu->n : 0);
+    if (menu_fault) cJSON_AddStringToObject(j, "fault", menu_fault);
+    if (with_text) cJSON_AddStringToObject(j, "text", menu_text ? menu_text : menu_builtin);
+    xSemaphoreGive(menu_lock);
+}
+
 // ---------- status ----------
 static const char *reset_reason(void)
 {
@@ -295,7 +388,7 @@ static void arm_state(cJSON *s)
     } else cJSON_AddNullToObject(s, "last_fire");
 }
 
-static cJSON *state_json(void)
+static cJSON *state_json_(bool menu_too)
 {
     cJSON *s = cJSON_CreateObject();
     kbd_state(s);
@@ -310,6 +403,7 @@ static cJSON *state_json(void)
     wifi_state(s);
     channel_state(s);
     arm_state(s);
+    if (knob_present()) menu_state(s, menu_too);
     seed_state(s);
     update_state(s);
     cJSON *a = cJSON_AddArrayToObject(s, "events");
@@ -322,6 +416,8 @@ static cJSON *state_json(void)
     }
     return s;
 }
+
+static cJSON *state_json(void) { return state_json_(false); }
 
 // ---------- commands ----------
 #ifdef SAT_DEV
@@ -429,6 +525,9 @@ static const char *run(const cmd_t *c, char *msg, size_t size)
     case CMD_UPDATE: return "start_raw's"; // not reached: app_handle_line hands these to start_raw
     case CMD_RESTART: return restart_soon();
     case CMD_IDENTIFY: return led_identify();
+    case CMD_MENU:
+        if (!knob_present()) return "no knob on this board";
+        return c->menu.text ? menu_set(c->menu.text, msg, size) : NULL;
 #ifdef SAT_DEV
     case CMD_DOWNLOAD: return do_download();
 #endif
@@ -440,7 +539,7 @@ char *app_handle_line(const char *line, size_t len, raw_t *raw)
 {
     cmd_t c;
     const char *err = NULL;
-    char msg[160];
+    char msg[MENU_ERR_MAX];
     bool ready = false;
     if (!first_cmd_ms) first_cmd_ms = now_ms();
     if (proto_parse(line, len, &c, &err)) return proto_answer(err, NULL);
@@ -448,9 +547,10 @@ char *app_handle_line(const char *line, size_t len, raw_t *raw)
     err = proto_check(&c, &h);
     if (!err && (c.kind == CMD_SEED || c.kind == CMD_UPDATE)) err = start_raw(&c, raw, &ready, msg, sizeof(msg));
     else if (!err) err = run(&c, msg, sizeof(msg));
+    bool menu_too = c.kind == CMD_MENU;
     proto_free(&c);
     if (ready) return strdup(READY);
-    return proto_answer(err, err ? NULL : state_json());
+    return proto_answer(err, err ? NULL : state_json_(menu_too));
 }
 
 void app_answered(void) { update_answered(); }
@@ -468,6 +568,7 @@ void app_main(void)
         nvs_flash_init();
     }
     arm_load();
+    menu_init();
     xTaskCreate(armer_task, "armer", 4096, NULL, 7, &armer_h);
 
     // the seed volume must be ready before the host can ask for it

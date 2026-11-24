@@ -16,7 +16,7 @@ static const struct {
 } commands[] = {
     {"status", CMD_STATUS}, {"key", CMD_KEY},   {"disarm", CMD_DISARM}, {"press", CMD_PRESS},
     {"release", CMD_RELEASE}, {"type", CMD_TYPE}, {"seed", CMD_SEED},     {"update", CMD_UPDATE},
-    {"restart", CMD_RESTART}, {"identify", CMD_IDENTIFY},
+    {"restart", CMD_RESTART}, {"identify", CMD_IDENTIFY}, {"menu", CMD_MENU},
 #ifdef SAT_DEV
     {"download", CMD_DOWNLOAD},
 #endif
@@ -62,6 +62,15 @@ static const char *parse_key(const cJSON *req, cmd_t *c)
     c->key.persist = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(req, "persist"));
     c->key.sticky = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(req, "sticky"));
     if (c->key.sticky) c->key.persist = true;
+    return NULL;
+}
+
+static const char *parse_menu(const cJSON *req, cmd_t *c)
+{
+    const cJSON *t = cJSON_GetObjectItemCaseSensitive(req, "text");
+    if (!t) return NULL;
+    if (!cJSON_IsString(t)) return "text must be a string";
+    c->menu.text = t->valuestring; // menu.c judges it
     return NULL;
 }
 
@@ -154,6 +163,7 @@ int proto_parse(const char *line, size_t len, cmd_t *out, const char **err)
         case CMD_TYPE: e = parse_type(req, out); break;
         case CMD_SEED: e = parse_seed(req, out); break;
         case CMD_UPDATE: e = parse_update(req, out); break;
+        case CMD_MENU: e = parse_menu(req, out); break;
         default: break;
         }
     }

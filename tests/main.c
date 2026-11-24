@@ -14,6 +14,7 @@ int main(void)
     test_settings();
     test_usbserial();
     test_wlsplit();
+    test_menu();
     printf("test: %d checks, %d failed\n", check_run, check_failed);
     return check_failed ? 1 : 0;
 }

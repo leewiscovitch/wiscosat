@@ -5,6 +5,7 @@
 //     sent into what is running now
 //   a combination to send (ctrl-alt-del, ...): once, now. The one that restarts a machine with no question
 //     (Alt-SysRq s, u, b) wants the knob held for 2 s
+// The list is a text (menu.h): the built-in one, or the one the command menu gave the unit.
 // With no menu on the screen a press takes away what is armed or being sent, and does nothing else: a bump in a bag
 // arms and sends nothing. The menu goes after 10 s untouched. For a unit used by itself, away from its network.
 #include <stdio.h>
@@ -21,24 +22,7 @@
 #define MENU_IDLE_MS 10000 // untouched this long: the menu goes
 #define DEBOUNCE_MS 30
 #define LONG_MS 2000
-#define SYSRQ_GAP_MS 2000 // between s (sync), u (read-only) and b (restart)
 #define SHOWN_MS 1500     // how long "Sent" or why not stays
-
-typedef enum { ARM, SEND, SEND_LONG } kind_t;
-static const struct {
-    const char *label;
-    kind_t kind;
-    const char *keys[3];
-} entries[] = {
-    {"F1", ARM, {"f1"}},         {"F2", ARM, {"f2"}},       {"F3", ARM, {"f3"}},   {"F4", ARM, {"f4"}},
-    {"F5", ARM, {"f5"}},         {"F6", ARM, {"f6"}},       {"F7", ARM, {"f7"}},   {"F8", ARM, {"f8"}},
-    {"F9", ARM, {"f9"}},         {"F10", ARM, {"f10"}},     {"F11", ARM, {"f11"}}, {"F12", ARM, {"f12"}},
-    {"Delete", ARM, {"delete"}}, {"Enter", ARM, {"enter"}}, {"Esc", ARM, {"esc"}},
-    {"ctrl-alt-del", SEND, {"ctrl-alt-del"}},
-    {"Restart SysRq", SEND_LONG, {"alt-sysrq-s", "alt-sysrq-u", "alt-sysrq-b"}},
-    {"ctrl-alt-F2", SEND, {"ctrl-alt-f2"}},
-};
-#define NENTRIES ((int)(sizeof(entries) / sizeof(entries[0])))
 
 // read every millisecond in the timer's task
 static volatile int turned;       // detents not yet taken by the task (+ clockwise)
@@ -70,31 +54,35 @@ static void sample(void *arg)
     else if (down_ms < 60000) down_ms++;
 }
 
-static void show(int i)
+static void show(const menu_entry_t *e, int i, int n)
 {
     static const char *const how[] = {"press to arm", "press to send", "hold 2 s to send"};
     char pos[24];
-    snprintf(pos, sizeof(pos), "%d of %d", i + 1, NENTRIES);
-    screen_show(entries[i].label, how[entries[i].kind], pos);
+    snprintf(pos, sizeof(pos), "%d of %d", i + 1, n);
+    screen_show(e->label, how[e->kind], pos);
 }
 
-static void send(int i)
+static void send(const menu_entry_t *e)
 {
     const char *err = NULL;
-    screen_show("Sending", entries[i].label, "");
-    for (int k = 0; k < 3 && entries[i].keys[k] && !err; k++) {
-        if (k) vTaskDelay(pdMS_TO_TICKS(SYSRQ_GAP_MS));
-        err = app_ui_tap(entries[i].keys[k]);
-        // the restart's own key: the host is gone before it takes the key-up
-        if (err && entries[i].kind == SEND_LONG && k == 2) err = NULL;
+    menu_step_t s;
+    screen_show("Sending", e->label, "");
+    for (int i = 0; !err && menu_step(e->keys, i, &s) == 1; i++) {
+        if (s.wait_ms) vTaskDelay(pdMS_TO_TICKS(s.wait_ms));
+        if (s.wait) continue;
+        err = app_ui_tap(s.name);
+        // Alt-SysRq b restarts the host before it takes the key-up: that key's error is the success
+        size_t n = strlen(s.name);
+        if (err && n >= 7 && !strcmp(s.name + n - 7, "sysrq-b")) err = NULL;
     }
-    screen_show(err ? "Not sent" : "Sent", entries[i].label, err ? err : "");
+    screen_show(err ? "Not sent" : "Sent", e->label, err ? err : "");
     vTaskDelay(pdMS_TO_TICKS(SHOWN_MS));
 }
 
 static void knob_task(void *arg)
 {
-    int at = 1; // F2: where the menu opens the first time; after that where it was left
+    static menu_entry_t e; // the entry shown, copied out of the menu
+    int at = 1;            // where the menu opens the first time (F2 in the built-in list); then where it was left
     uint32_t touched = 0;
     bool was_down = false, acted = false;
     for (;;) {
@@ -109,30 +97,42 @@ static void knob_task(void *arg)
         if (!browsing) {
             if (pressed) app_ui_disarm(); // what is armed or being sent goes; with nothing there, nothing happens
             else if (t) { // the first click opens the menu where it was
+                int n = app_menu_entry(-1, NULL);
+                if (!n) continue;
+                if (at >= n) at = 0;
+                app_menu_entry(at, &e);
                 browsing = true;
                 touched = now_ms();
-                show(at);
+                show(&e, at, n);
             }
             continue;
         }
-        if (t) {
-            at = ((at + t) % NENTRIES + NENTRIES) % NENTRIES;
-            touched = now_ms();
-            show(at);
+        int n = app_menu_entry(-1, NULL); // it can change under the knob (the command menu)
+        if (!n) {
+            browsing = false;
+            app_ui_refresh();
+            continue;
         }
-        bool go = entries[at].kind == SEND_LONG ? down && d >= LONG_MS && !acted : pressed;
+        if (t || at >= n) {
+            at = at >= n ? 0 : ((at + t) % n + n) % n;
+            app_menu_entry(at, &e);
+            touched = now_ms();
+            show(&e, at, n);
+        }
+        bool go = e.kind == MENU_HOLD ? down && d >= LONG_MS && !acted : pressed;
         if (go) {
             acted = true;
-            if (entries[at].kind == ARM) {
-                const char *err = app_ui_arm(entries[at].keys[0]);
-                if (err) ev(err);
+            if (e.kind == MENU_ARM) {
+                menu_step_t s;
+                const char *err = menu_step(e.keys, 0, &s) == 1 ? app_ui_arm(s.name) : "menu: no key";
+                if (err) ev("knob: the key was not armed");
                 browsing = false;
                 app_ui_refresh();
                 continue;
             }
-            send(at);
+            send(&e);
             turned = 0; // what was turned while it sent is not meant
-            show(at);
+            show(&e, at, n);
             touched = now_ms();
         } else if (down) touched = now_ms();
         if (now_ms() - touched >= MENU_IDLE_MS) {

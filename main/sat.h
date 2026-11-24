@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "cJSON.h"
+#include "menu.h"
 #include "seedrules.h"
 #include "settings.h"
 
@@ -61,6 +62,8 @@ void app_ui_refresh(void);
 const char *app_ui_arm(const char *name);
 bool app_ui_disarm(void);
 const char *app_ui_tap(const char *name);
+// the menu's i-th entry copied out (the menu can change under the knob: the command menu); how many there are
+int app_menu_entry(int i, menu_entry_t *out);
 
 // knob.c: the board's knob picks a key to arm or a combination to send (none: nothing)
 void knob_start(void);

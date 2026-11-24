@@ -29,6 +29,7 @@ typedef enum {
     CMD_UPDATE,
     CMD_RESTART,
     CMD_IDENTIFY,
+    CMD_MENU,
 #ifdef SAT_DEV
     CMD_DOWNLOAD, // a dev build only (./build --dev): restart into the ROM's download mode, for esptool
 #endif
@@ -59,6 +60,9 @@ typedef struct {
         uint32_t size;
         char sha256[65]; // lower-case hex
     } update;
+    struct {
+        const char *text; // NULL: only read the menu back; "": back to the built-in list; else the new text (menu.h)
+    } menu;
     void *json_; // the parsed line the strings above point into; proto_free lets it go
 } cmd_t;
 
