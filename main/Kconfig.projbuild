@@ -161,5 +161,13 @@ config SAT_BATTERY_USB_MV
     help
         The T-Embed's pin reads its supply rail: USB through a Schottky diode with a cable in (about 4700 mV), the
         battery with it out (a Li-ion cell holds 4200 at most). status's battery says usb_power from this line.
+config SAT_BATTERY_FLOOR_MV
+    int "A reading under this (mV) is no supply: the pin is wired to no battery"
+    depends on SAT_BATTERY_ADC
+    default 3000
+    help
+        No running board's rail is this low (it would have browned out), so a pin reading under it is wired to
+        nothing that powers the board (a board with no battery circuit): status's battery says usb_power null and a
+        fault, and nothing about the cable.
 
 endmenu

@@ -45,6 +45,12 @@ from a host that is asleep**: on the bus both are the same (the unit stays confi
 event `usb suspended`), and no pin of the T-Embed sees the cable's 5 V (its schematic: VBUS goes to the charger and
 the diode only). What it is not: a charge in percent (a Li-ion's voltage says that only roughly).
 
+**The battery is optional.** Nothing waits for the reading and nothing depends on it. A T-Embed with no battery reads
+USB through the diode (`usb_power: true`), the same as with one. A board built with `SAT_BATTERY` on whose pin is wired
+to no battery circuit reads under `SAT_BATTERY_FLOOR_MV` (3000: no running board's rail is that low, it would have
+browned out): `usb_power` is `null` with a `fault`, and nothing is said about the cable. Such a board is better built
+with `SAT_BATTERY` `none`.
+
 ## Build
 
 Needs ESP-IDF v5.5.6 (`IDF_PATH`, default `/opt/esp-idf`) with the `esp32s3` tools installed
@@ -256,7 +262,7 @@ sector 97: 20 pieces, none over a boundary).
 | `main/updrules.{c,h}` | pure: what an update may do (its size, one at a time, its end) and the new image's trial |
 | `main/led.c` | `identify`: the board's LED (Kconfig `SAT_LED`) |
 | `main/battery.c` | `status`'s `battery`: the voltage on the ADC pin (Kconfig `SAT_BATTERY`) |
-| `main/powerrules.{c,h}` | pure: whether a battery reading is USB power |
+| `main/powerrules.{c,h}` | pure: what a battery reading says: USB power, the battery, or nothing (a pin wired to none) |
 | `main/screen.c`, `main/font5x7.h` | the screen: the unit's name, address and version (Kconfig `SAT_SCREEN`); the 5x7 font, data only |
 | `main/keys.{c,h}` | pure: key names (`ctrl-alt-del`) and characters (US layout) to an 8-byte boot report |
 | `main/armed.{c,h}` | pure: the armed key's schedule and counters |

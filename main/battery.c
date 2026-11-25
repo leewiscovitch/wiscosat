@@ -4,7 +4,8 @@
 // On the T-Embed the pin reads the supply rail: USB's 5 V through a diode while a cable is in, the cell once it is out,
 // so the reading also says whether the unit runs on USB power (powerrules.h): the one way to tell a pulled cable from
 // a host that is asleep (both look the same on the bus; no pin sees the cable's 5 V). The cell's own voltage is
-// therefore read only with the cable out. Not a charge in percent: a Li-ion's voltage says that only roughly.
+// therefore read only with the cable out. No battery is needed: with none, the cable's USB is read. Not a charge in
+// percent: a Li-ion's voltage says that only roughly.
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "sdkconfig.h"
@@ -66,7 +67,14 @@ void battery_state(cJSON *s)
     }
     int mv = sum / n * CONFIG_SAT_BATTERY_DIVIDER;
     cJSON_AddNumberToObject(b, "mv", mv);
-    cJSON_AddBoolToObject(b, "usb_power", powerrules_usb(mv, CONFIG_SAT_BATTERY_USB_MV));
+    // a board with no battery on the cable reads USB (usb_power true); a pin wired to nothing reads under the floor
+    switch (powerrules_source(mv, CONFIG_SAT_BATTERY_USB_MV, CONFIG_SAT_BATTERY_FLOOR_MV)) {
+    case POWER_USB: cJSON_AddBoolToObject(b, "usb_power", true); break;
+    case POWER_BATTERY: cJSON_AddBoolToObject(b, "usb_power", false); break;
+    default:
+        cJSON_AddNullToObject(b, "usb_power");
+        cJSON_AddStringToObject(b, "fault", "no supply on the battery pin (a board without one?)");
+    }
 }
 #else
 void battery_init(void) {}
