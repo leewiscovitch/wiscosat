@@ -400,6 +400,7 @@ static cJSON *state_json_(bool menu_too)
     cJSON_AddNumberToObject(s, "first_command_ms", first_cmd_ms);
     cJSON_AddStringToObject(s, "reset_reason", reset_reason());
     cJSON_AddStringToObject(s, "ip", settings.ip_str);
+    battery_state(s);
     wifi_state(s);
     channel_state(s);
     arm_state(s);
@@ -584,6 +585,7 @@ void app_main(void)
     strlcpy(settings.wifi_ssid, "no-such-network-rollback-test", sizeof(settings.wifi_ssid));
     ev("broken build: wrong Wi-Fi name on purpose");
 #endif
+    battery_init();
     ui_version = esp_app_get_description()->version;
     ui_ready = true;
     ui_refresh();

@@ -10,6 +10,7 @@ int main(void)
     test_proto();
     test_seedrules();
     test_updrules();
+    test_powerrules();
     test_lockout();
     test_settings();
     test_usbserial();

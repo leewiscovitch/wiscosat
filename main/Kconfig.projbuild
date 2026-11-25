@@ -133,4 +133,33 @@ config SAT_KNOB_REVERSE
     depends on SAT_KNOB_ENCODER
     default n
 
+choice SAT_BATTERY
+    prompt "The battery whose voltage status shows"
+    default SAT_BATTERY_ADC
+    help
+        status's battery: its voltage in mV and whether that is USB power (usb_power), read through a divider on
+        an ADC pin when status asks. none: a board with no battery (status says "battery": null).
+
+config SAT_BATTERY_ADC
+    bool "A divider on an ADC pin (LilyGO T-Embed: GPIO 4, 100k and 100k, behind GPIO 46's switch)"
+config SAT_BATTERY_NONE
+    bool "none"
+endchoice
+
+config SAT_BATTERY_GPIO
+    int "Battery ADC GPIO"
+    depends on SAT_BATTERY_ADC
+    default 4
+config SAT_BATTERY_DIVIDER
+    int "The battery's voltage over the pin's (the divider's ratio)"
+    depends on SAT_BATTERY_ADC
+    default 2
+config SAT_BATTERY_USB_MV
+    int "A reading at or over this (mV) is USB power, not the battery"
+    depends on SAT_BATTERY_ADC
+    default 4400
+    help
+        The T-Embed's pin reads its supply rail: USB through a Schottky diode with a cable in (about 4700 mV), the
+        battery with it out (a Li-ion cell holds 4200 at most). status's battery says usb_power from this line.
+
 endmenu

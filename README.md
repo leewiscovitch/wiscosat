@@ -29,6 +29,22 @@ round are settings), or `none` for a board with no screen. A fault on the way (n
 `status`; the unit works on with a dark screen. What the screen shows is not refreshed: a changed address shows after
 a restart.
 
+### The battery
+
+A board with a battery keeps running with its cable pulled (the T-Embed has a charger and a battery connector).
+`status`'s `battery` says `mv` (the voltage, read when `status` asks: 16 samples, ESP-IDF's curve-fitting
+calibration) and `usb_power`. Kconfig `SAT_BATTERY`: a divider on an ADC pin (the T-Embed: GPIO 4, 100k and 100k, so
+`SAT_BATTERY_DIVIDER` 2; behind the switch that GPIO 46 keeps on), or `none` (`"battery": null`). A fault (the pin is
+no ADC pin, no calibration) is an event and `battery.fault`.
+
+On the T-Embed the pin reads the board's **supply rail**, not the cell alone: USB's 5 V through a Schottky diode
+while a cable is in (4664 mV read), the battery once it is out (3490 mV read on a low cell). So the cell's own voltage
+shows only with the cable out, and the reading says which power the unit is on: at or over `SAT_BATTERY_USB_MV`
+(4400; a Li-ion cell never holds more than 4.2 V) is `usb_power: true`. That is the one way to tell a **pulled cable
+from a host that is asleep**: on the bus both are the same (the unit stays configured and the bus suspended, the
+event `usb suspended`), and no pin of the T-Embed sees the cable's 5 V (its schematic: VBUS goes to the charger and
+the diode only). What it is not: a charge in percent (a Li-ion's voltage says that only roughly).
+
 ## Build
 
 Needs ESP-IDF v5.5.6 (`IDF_PATH`, default `/opt/esp-idf`) with the `esp32s3` tools installed
@@ -239,6 +255,8 @@ sector 97: 20 pieces, none over a boundary).
 | `main/update.c` | the update: the other slot, the SHA-256, the trial and the rollback |
 | `main/updrules.{c,h}` | pure: what an update may do (its size, one at a time, its end) and the new image's trial |
 | `main/led.c` | `identify`: the board's LED (Kconfig `SAT_LED`) |
+| `main/battery.c` | `status`'s `battery`: the voltage on the ADC pin (Kconfig `SAT_BATTERY`) |
+| `main/powerrules.{c,h}` | pure: whether a battery reading is USB power |
 | `main/screen.c`, `main/font5x7.h` | the screen: the unit's name, address and version (Kconfig `SAT_SCREEN`); the 5x7 font, data only |
 | `main/keys.{c,h}` | pure: key names (`ctrl-alt-del`) and characters (US layout) to an 8-byte boot report |
 | `main/armed.{c,h}` | pure: the armed key's schedule and counters |
@@ -250,7 +268,7 @@ sector 97: 20 pieces, none over a boundary).
 | `tools/mknvs` | a unit's NVS image from a CSV on standard input |
 | `tools/sat-probe` | the bench client: one line over the channel, or a wrong key, or a plain line |
 | `sdkconfig.defaults` | the settings that differ from ESP-IDF's defaults, each with its reason |
-| `sdkconfig.dev`, `sdkconfig.broken`, `main/Kconfig.projbuild` | the dev build's setting `CONFIG_SAT_DEV` (`./build --dev`), the broken one's `CONFIG_SAT_BROKEN` (`--broken`), the LED (`SAT_LED`), the screen (`SAT_SCREEN_*`) |
+| `sdkconfig.dev`, `sdkconfig.broken`, `main/Kconfig.projbuild` | the dev build's setting `CONFIG_SAT_DEV` (`./build --dev`), the broken one's `CONFIG_SAT_BROKEN` (`--broken`), the LED (`SAT_LED`), the screen (`SAT_SCREEN_*`), the battery (`SAT_BATTERY_*`) |
 | `main/idf_component.yml` | the managed components (`espressif/esp_tinyusb`); `dependencies.lock` pins them |
 
 The pure parts include no ESP-IDF header, so they build on Linux as they are; the device parts call them.
@@ -259,7 +277,7 @@ The pure parts include no ESP-IDF header, so they build on Linux as they are; th
 
 Inside the channel, one JSON object per line, one answer line back: `{"ok":true,"state":{...}}` or
 `{"ok":false,"error":"..."}`. `state` holds, besides the trial's: `name`, `version`, `dev` (a dev build), `slot`
-(the running app slot), `update` (`running`, `trial`: `none`, `on trial`, `proven`, `rolling back`; `boots`: the slot
+(the running app slot), `battery` ("The battery"), `update` (`running`, `trial`: `none`, `on trial`, `proven`, `rolling back`; `boots`: the slot
 the next start boots), `wifi`, `channel`.
 
 | Command | Fields | What |

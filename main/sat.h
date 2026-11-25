@@ -67,6 +67,10 @@ const char *app_ui_tap(const char *name);
 // entries there are
 int app_menu_view(int at, menu_view_t *out);
 
+// battery.c: the battery's voltage (none: "battery": null)
+void battery_init(void);
+void battery_state(cJSON *s);
+
 // knob.c: the board's knob picks a key to arm or a combination to send (none: nothing)
 void knob_start(void);
 bool knob_present(void);
